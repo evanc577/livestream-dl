@@ -21,6 +21,7 @@ pub struct Livestream {
     url: Url,
     client: ClientWithMiddleware,
     stopper: Stopper,
+    network_options: NetworkOptions,
 }
 
 #[derive(Clone, Debug)]
@@ -80,6 +81,7 @@ impl Livestream {
                 url: media_url,
                 client,
                 stopper: stopper.clone(),
+                network_options: network_options.clone(),
             },
             stopper,
         ))
@@ -97,7 +99,7 @@ impl Livestream {
         };
 
         // Create segments directory if needed
-        if let Some(ref p) = options.segments_dir {
+        if let Some(ref p) = options.segments_directory {
             fs::create_dir_all(&p).await?;
         }
 
@@ -118,8 +120,8 @@ impl Livestream {
         // Download segments
         let mut file = fs::File::create(&output_temp).await?;
         let mut buffered = rx
-            .map(|(s, u)| fetch_segment(&self.client, u, s, options.segments_dir.as_ref()))
-            .buffered(20);
+            .map(|(s, u)| fetch_segment(&self.client, u, s, options.segments_directory.as_ref()))
+            .buffered(self.network_options.max_simultaneous_downloads);
         while let Some(x) = buffered.next().await {
             let (bytes, url) = x?;
             // Append segment to output file

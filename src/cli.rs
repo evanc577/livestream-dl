@@ -3,10 +3,12 @@ use std::path::PathBuf;
 use clap::Parser;
 use reqwest::Url;
 
-#[derive(Parser, Debug)]
+/// An m3u8 livestream downloader
+#[derive(Parser, Clone, Debug)]
+#[clap(version, about)]
 pub struct Args {
     /// URL to m3u8 playlist
-    #[clap(value_parser, value_name = "URL", value_hint = clap::ValueHint::Url)]
+    #[clap(value_parser, value_hint = clap::ValueHint::Url)]
     pub m3u8_url: Url,
 
     #[clap(flatten)]
@@ -16,18 +18,18 @@ pub struct Args {
     pub network_options: NetworkOptions,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Clone, Debug)]
 pub struct DownloadOptions {
     /// Output file (without extension)
-    #[clap(short, long, value_parser, value_name = "PATH", value_hint = clap::ValueHint::FilePath)]
+    #[clap(short, long, value_parser, value_hint = clap::ValueHint::FilePath)]
     pub output: PathBuf,
 
-    /// Segments directory
-    #[clap(short, long, value_parser, value_name = "PATH", value_hint = clap::ValueHint::DirPath)]
-    pub segments_dir: Option<PathBuf>,
+    /// Save segments to this directory
+    #[clap(short, long, value_parser, value_hint = clap::ValueHint::DirPath)]
+    pub segments_directory: Option<PathBuf>,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Clone, Debug)]
 pub struct NetworkOptions {
     /// Maximum number of times to retry network requests before giving up
     #[clap(long, value_parser, default_value = "10")]
@@ -36,4 +38,8 @@ pub struct NetworkOptions {
     /// Network requests timeout in seconds
     #[clap(long, value_parser, default_value = "10")]
     pub timeout: u64,
+
+    /// Maximum number of simultaneous downloads
+    #[clap(long, value_parser, default_value = "20")]
+    pub max_simultaneous_downloads: usize,
 }
