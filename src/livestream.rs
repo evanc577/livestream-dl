@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -60,6 +59,7 @@ impl Livestream {
         let final_url = resp.url().clone();
         let bytes = resp.bytes().await?;
 
+        // Get media playlist url
         let media_url = match m3u8_rs::parse_playlist(&bytes) {
             Ok((_, Playlist::MasterPlaylist(p))) => {
                 let max_stream = p
@@ -144,25 +144,29 @@ async fn m3u8_fetcher(
     tx: mpsc::UnboundedSender<(u64, Url)>,
     url: Url,
 ) -> Result<()> {
-    let mut interval = time::interval(Duration::from_secs(5));
-    interval.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
-    let mut downloaded_segments = HashSet::new();
+    let mut last_seq = None;
 
     loop {
         // Fetch playlist
+        let now = time::Instant::now();
+        let mut found_new_segments = false;
         let bytes = client.get(url.clone()).send().await?.bytes().await?;
         let media_playlist = m3u8_rs::parse_media_playlist(&bytes)
             .map_err(|e| anyhow::anyhow!("{:?}", e))?
             .1;
 
+        // Loop through media segments
         for (i, segment) in (media_playlist.media_sequence..).zip(media_playlist.segments.iter()) {
             // Skip segment if already downloaded
-            if downloaded_segments.contains(&(i, segment.uri.clone())) {
-                continue;
+            if let Some(s) = last_seq {
+                if s >= i {
+                    continue;
+                }
             }
 
-            // Remember this segment
-            downloaded_segments.insert((i, segment.uri.clone()));
+            // Segment is new
+            last_seq = Some(i);
+            found_new_segments = true;
 
             // Parse URL
             let url = match Url::parse(&segment.uri) {
@@ -182,13 +186,19 @@ async fn m3u8_fetcher(
             return Ok(());
         }
 
-        // Wait for next interval or return if manually stopped
-        tokio::select! {
-            _ = interval.tick() => {}
-            _ = notify_stop.notified() => {
-                return Ok(());
-            }
-        };
+        if found_new_segments {
+            // Wait for target duration or return immediately if manually stopped
+            tokio::select! {
+                _ = time::sleep_until(now + Duration::from_secs_f32(media_playlist.target_duration)) => (),
+                _ = notify_stop.notified() => return Ok(()),
+            };
+        } else {
+            // Wait for half target duration or return immediately if manually stopped
+            tokio::select! {
+                _ = time::sleep_until(now + Duration::from_secs_f32(media_playlist.target_duration / 2.0)) => (),
+                _ = notify_stop.notified() => return Ok(()),
+            };
+        }
     }
 }
 
@@ -223,6 +233,7 @@ async fn remux(input: impl AsRef<Path>) -> Result<()> {
     println!("Remuxing to mp4");
     let output = input.as_ref().with_extension("mp4");
 
+    // Call ffmpeg to remux video file
     process::Command::new("ffmpeg")
         .arg("-i")
         .arg(input.as_ref())
@@ -235,6 +246,7 @@ async fn remux(input: impl AsRef<Path>) -> Result<()> {
         .wait()
         .await?;
 
+    // Delete original
     fs::remove_file(input.as_ref()).await?;
 
     Ok(())
