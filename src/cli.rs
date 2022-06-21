@@ -9,7 +9,7 @@ pub struct Args {
     #[clap(value_parser, value_name = "URL", value_hint = clap::ValueHint::Url)]
     pub m3u8_url: Url,
 
-    /// Output file
+    /// Output file (without extension)
     #[clap(short, long, value_parser, value_name = "PATH", value_hint = clap::ValueHint::FilePath)]
     pub output: PathBuf,
 
