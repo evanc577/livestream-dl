@@ -19,6 +19,7 @@ pub struct Args {
 }
 
 #[derive(Parser, Clone, Debug)]
+#[clap(help_heading = "DOWNLOAD OPTIONS")]
 pub struct DownloadOptions {
     /// Output file (without extension)
     #[clap(short, long, value_parser, value_hint = clap::ValueHint::FilePath)]
@@ -30,6 +31,7 @@ pub struct DownloadOptions {
 }
 
 #[derive(Parser, Clone, Debug)]
+#[clap(help_heading = "NETWORK OPTIONS")]
 pub struct NetworkOptions {
     /// Maximum number of times to retry network requests before giving up
     #[clap(long, value_parser, default_value = "10")]
