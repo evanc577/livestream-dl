@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,17 +14,13 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Notify;
 use tokio::{fs, time};
 
+use crate::cli::{DownloadOptions, NetworkOptions};
+
 #[derive(Debug)]
 pub struct Livestream {
     url: Url,
     client: ClientWithMiddleware,
     stopper: Stopper,
-}
-
-#[derive(Debug)]
-pub struct LivestreamOptions {
-    pub output: PathBuf,
-    pub segments_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -45,13 +41,20 @@ impl Stopper {
 }
 
 impl Livestream {
-    pub async fn new(url: &Url) -> Result<(Self, Stopper)> {
-        let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
-        let retry_policy = policies::ExponentialBackoff::builder().build_with_max_retries(3);
+    pub async fn new(url: &Url, network_options: &NetworkOptions) -> Result<(Self, Stopper)> {
+        // Create reqwest client
+        let client = Client::builder()
+            .timeout(Duration::from_secs(network_options.timeout))
+            .build()?;
+        let retry_policy = policies::ExponentialBackoff::builder()
+            .retry_bounds(Duration::from_secs(1), Duration::from_secs(10))
+            .backoff_exponent(2)
+            .build_with_max_retries(network_options.max_retries);
         let client = ClientBuilder::new(client)
             .with(RetryTransientMiddleware::new_with_policy(retry_policy))
             .build();
 
+        // Check if m3u8 is master or media
         let bytes = client.get(url.clone()).send().await?.bytes().await?;
         let media_url = match m3u8_rs::parse_playlist(&bytes) {
             Ok((_, Playlist::MasterPlaylist(p))) => {
@@ -82,7 +85,7 @@ impl Livestream {
         ))
     }
 
-    pub async fn download(&self, options: LivestreamOptions) -> Result<()> {
+    pub async fn download(&self, options: &DownloadOptions) -> Result<()> {
         let (tx, rx) = mpsc::unbounded();
 
         // Spawn m3u8 reader task
@@ -119,6 +122,7 @@ impl Livestream {
             .buffered(20);
         while let Some(x) = buffered.next().await {
             let (bytes, url) = x?;
+            // Append segment to output file
             file.write_all(&bytes).await?;
             println!("Downloaded {}", url.as_str());
         }
@@ -140,28 +144,37 @@ async fn m3u8_fetcher(
     url: Url,
 ) -> Result<()> {
     let mut interval = time::interval(Duration::from_secs(5));
+    interval.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
     let mut downloaded_segments = HashSet::new();
 
     loop {
+        // Fetch playlist
         let bytes = client.get(url.clone()).send().await?.bytes().await?;
         let media_playlist = m3u8_rs::parse_media_playlist(&bytes)
             .map_err(|e| anyhow::anyhow!("{:?}", e))?
             .1;
 
         for (i, segment) in (media_playlist.media_sequence..).zip(media_playlist.segments.iter()) {
-            if downloaded_segments.contains(&segment.uri) {
+            // Skip segment if already downloaded
+            if downloaded_segments.contains(&(i, segment.uri.clone())) {
                 continue;
             }
-            downloaded_segments.insert(segment.uri.clone());
+
+            // Remember this segment
+            downloaded_segments.insert((i, segment.uri.clone()));
+
+            // Download segment
             if tx.unbounded_send((i, Url::parse(&segment.uri)?)).is_err() {
                 return Ok(());
             }
         }
 
+        // Return if stream ended
         if media_playlist.end_list {
             return Ok(());
         }
 
+        // Wait for next interval or return if manually stopped
         tokio::select! {
             _ = interval.tick() => {}
             _ = notify_stop.notified() => {
@@ -177,6 +190,7 @@ async fn fetch_segment(
     segment: u64,
     segment_path: Option<impl AsRef<Path>>,
 ) -> Result<(Vec<u8>, Url)> {
+    // Fetch segment
     let bytes: Vec<u8> = client
         .get(url.clone())
         .send()
@@ -186,8 +200,9 @@ async fn fetch_segment(
         .into_iter()
         .collect();
 
+    // Save segment to disk if needed
     if let Some(p) = segment_path {
-        let filename = p.as_ref().join(format!("segment_{:010}", segment));
+        let filename = p.as_ref().join(format!("segment_{:010}.ts", segment));
         let mut file = fs::File::create(&filename).await?;
         file.write_all(&bytes).await?;
     }

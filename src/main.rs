@@ -3,18 +3,15 @@ mod livestream;
 
 use anyhow::Result;
 use clap::Parser;
-use livestream::{Livestream, LivestreamOptions};
+use livestream::Livestream;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = cli::Args::parse();
 
-    let (livestream, stopper) = Livestream::new(&args.m3u8_url).await?;
-    let livestream_options = LivestreamOptions {
-        output: args.output,
-        segments_dir: args.segments_dir,
-    };
+    let (livestream, stopper) = Livestream::new(&args.m3u8_url, &args.network_options).await?;
 
+    // Gracefully exit on ctrl-c
     {
         #[cfg(target_os = "linux")]
         let mut stream = {
@@ -34,7 +31,8 @@ async fn main() -> Result<()> {
         });
     }
 
-    livestream.download(livestream_options).await?;
+    // Download stream
+    livestream.download(&args.download_options).await?;
 
     Ok(())
 }
