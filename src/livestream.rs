@@ -12,7 +12,7 @@ use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies, RetryTransientMiddleware};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Notify;
-use tokio::{fs, time};
+use tokio::{fs, process, time};
 
 use crate::cli::{DownloadOptions, NetworkOptions};
 
@@ -107,18 +107,8 @@ impl Livestream {
         }
 
         // Generate output file names
-        let (output_temp, output) = {
-            let filename = options
-                .output
-                .file_name()
-                .ok_or_else(|| anyhow::anyhow!("Output is not a file"))?
-                .to_owned();
-            let (mut filename_1, mut filename_2) = (filename.clone(), filename);
-            filename_1.push(".ts.part");
-            filename_2.push(".ts");
-            let dir = options.output.parent().unwrap();
-            (dir.join(filename_1), dir.join(filename_2))
-        };
+        let output = options.output.with_extension("ts");
+        let output_temp = options.output.with_extension("part");
 
         // Download segments
         let mut file = fs::File::create(&output_temp).await?;
@@ -133,7 +123,12 @@ impl Livestream {
         }
 
         // Rename output file
-        fs::rename(output_temp, output).await?;
+        fs::rename(output_temp, &output).await?;
+
+        // Remux if necessary
+        if options.remux {
+            remux(output).await?;
+        }
 
         // Check join handle
         handle.await??;
@@ -222,4 +217,25 @@ async fn fetch_segment(
     }
 
     Ok((bytes, url))
+}
+
+async fn remux(input: impl AsRef<Path>) -> Result<()> {
+    println!("Remuxing to mp4");
+    let output = input.as_ref().with_extension("mp4");
+
+    process::Command::new("ffmpeg")
+        .arg("-i")
+        .arg(input.as_ref())
+        .arg("-c")
+        .arg("copy")
+        .arg("-movflags")
+        .arg("+faststart")
+        .arg(output)
+        .spawn()?
+        .wait()
+        .await?;
+
+    fs::remove_file(input.as_ref()).await?;
+
+    Ok(())
 }
