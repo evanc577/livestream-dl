@@ -11,6 +11,10 @@ pub struct Args {
     #[clap(value_parser, value_hint = clap::ValueHint::Url)]
     pub m3u8_url: Url,
 
+    /// Log to file
+    #[clap(short, long, value_parser, value_hint = clap::ValueHint::FilePath)]
+    pub log_file: Option<PathBuf>,
+
     #[clap(flatten)]
     pub download_options: DownloadOptions,
 
@@ -42,7 +46,7 @@ pub struct NetworkOptions {
     pub max_retries: u32,
 
     /// Network requests timeout in seconds
-    #[clap(long, value_parser, default_value_t = 10)]
+    #[clap(long, value_parser, default_value_t = 30)]
     pub timeout: u64,
 
     /// Maximum number of simultaneous downloads

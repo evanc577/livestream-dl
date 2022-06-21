@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use futures::channel::mpsc;
 use futures::StreamExt;
+use log::{info, trace};
 use m3u8_rs::Playlist;
 use reqwest::{Client, Url};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
@@ -116,10 +117,9 @@ impl Livestream {
             .map(|(s, u)| fetch_segment(&self.client, u, s, options.segments_directory.as_ref()))
             .buffered(self.network_options.max_simultaneous_downloads);
         while let Some(x) = buffered.next().await {
-            let (bytes, url) = x?;
+            let bytes = x?;
             // Append segment to output file
             file.write_all(&bytes).await?;
-            println!("Downloaded {}", url.as_str());
         }
 
         // Rename output file
@@ -150,6 +150,7 @@ async fn m3u8_fetcher(
         // Fetch playlist
         let now = time::Instant::now();
         let mut found_new_segments = false;
+        trace!("Fetching {}", url.as_str());
         let bytes = client.get(url.clone()).send().await?.bytes().await?;
         let media_playlist = m3u8_rs::parse_media_playlist(&bytes)
             .map_err(|e| anyhow::anyhow!("{:?}", e))?
@@ -176,6 +177,7 @@ async fn m3u8_fetcher(
             };
 
             // Download segment
+            trace!("Found new segment {}", url.as_str());
             if tx.unbounded_send((i, url)).is_err() {
                 return Ok(());
             }
@@ -183,6 +185,7 @@ async fn m3u8_fetcher(
 
         // Return if stream ended
         if media_playlist.end_list {
+            trace!("Playlist ended");
             return Ok(());
         }
 
@@ -208,7 +211,7 @@ async fn fetch_segment(
     url: Url,
     segment: u64,
     segment_path: Option<impl AsRef<Path>>,
-) -> Result<(Vec<u8>, Url)> {
+) -> Result<Vec<u8>> {
     // Fetch segment
     let bytes: Vec<u8> = client
         .get(url.clone())
@@ -222,15 +225,18 @@ async fn fetch_segment(
     // Save segment to disk if needed
     if let Some(p) = segment_path {
         let filename = p.as_ref().join(format!("segment_{:010}.ts", segment));
+        trace!("Saving {} to {}", url.as_str(), &filename.to_string_lossy());
         let mut file = fs::File::create(&filename).await?;
         file.write_all(&bytes).await?;
     }
 
-    Ok((bytes, url))
+    info!("Downloaded {}", url.as_str());
+
+    Ok(bytes)
 }
 
 async fn remux(input: impl AsRef<Path>) -> Result<()> {
-    println!("Remuxing to mp4");
+    info!("Remuxing to mp4");
     let output = input.as_ref().with_extension("mp4");
 
     // Call ffmpeg to remux video file
@@ -247,6 +253,7 @@ async fn remux(input: impl AsRef<Path>) -> Result<()> {
         .await?;
 
     // Delete original
+    trace!("Removing {}", input.as_ref().to_string_lossy());
     fs::remove_file(input.as_ref()).await?;
 
     Ok(())
