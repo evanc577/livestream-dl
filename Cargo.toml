@@ -16,6 +16,7 @@ reqwest = { version = "0.11", features = ["rustls-tls"], default-features = fals
 reqwest-middleware = "0.1"
 reqwest-retry = "0.1"
 tokio = { version = "1.19", features = ["full"] }
+url = "2.2"
 
 [build-dependencies]
 clap = { version = "3.2", features = ["derive"] }

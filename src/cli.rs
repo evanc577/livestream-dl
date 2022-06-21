@@ -7,7 +7,7 @@ use reqwest::Url;
 #[derive(Parser, Clone, Debug)]
 #[clap(version, about)]
 pub struct Args {
-    /// URL to m3u8 playlist
+    /// m3u8 playlist URL
     #[clap(value_parser, value_hint = clap::ValueHint::Url)]
     pub m3u8_url: Url,
 

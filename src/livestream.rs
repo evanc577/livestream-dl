@@ -56,7 +56,10 @@ impl Livestream {
             .build();
 
         // Check if m3u8 is master or media
-        let bytes = client.get(url.clone()).send().await?.bytes().await?;
+        let resp = client.get(url.clone()).send().await?;
+        let final_url = resp.url().clone();
+        let bytes = resp.bytes().await?;
+
         let media_url = match m3u8_rs::parse_playlist(&bytes) {
             Ok((_, Playlist::MasterPlaylist(p))) => {
                 let max_stream = p
@@ -68,7 +71,7 @@ impl Livestream {
                     .1;
                 reqwest::Url::parse(&max_stream.uri)?
             }
-            Ok((_, Playlist::MediaPlaylist(_))) => url.clone(),
+            Ok((_, Playlist::MediaPlaylist(_))) => final_url,
             Err(e) => {
                 return Err(anyhow::anyhow!("Error parsing m3u8 playlist: {}", e));
             }
@@ -129,16 +132,17 @@ impl Livestream {
             println!("Downloaded {}", url.as_str());
         }
 
-        // Check join handle
-        handle.await??;
-
         // Rename output file
         fs::rename(output_temp, output).await?;
+
+        // Check join handle
+        handle.await??;
 
         Ok(())
     }
 }
 
+/// Periodically fetch m3u8 media playlist and send new segments to download task
 async fn m3u8_fetcher(
     client: ClientWithMiddleware,
     notify_stop: Stopper,
@@ -165,8 +169,15 @@ async fn m3u8_fetcher(
             // Remember this segment
             downloaded_segments.insert((i, segment.uri.clone()));
 
+            // Parse URL
+            let url = match Url::parse(&segment.uri) {
+                Ok(u) => u,
+                Err(e) if e == url::ParseError::RelativeUrlWithoutBase => url.join(&segment.uri)?,
+                Err(e) => return Err(e.into()),
+            };
+
             // Download segment
-            if tx.unbounded_send((i, Url::parse(&segment.uri)?)).is_err() {
+            if tx.unbounded_send((i, url)).is_err() {
                 return Ok(());
             }
         }
@@ -186,6 +197,7 @@ async fn m3u8_fetcher(
     }
 }
 
+/// Download segment and save to disk if necessary
 async fn fetch_segment(
     client: &ClientWithMiddleware,
     url: Url,

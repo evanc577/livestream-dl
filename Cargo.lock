@@ -498,6 +498,7 @@ dependencies = [
  "reqwest-middleware",
  "reqwest-retry",
  "tokio",
+ "url",
 ]
 
 [[package]]
