@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::fmt::Display;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,7 +20,7 @@ use crate::cli::{DownloadOptions, NetworkOptions};
 
 #[derive(Debug)]
 pub struct Livestream {
-    url: Url,
+    streams: HashMap<Stream, Url>,
     client: ClientWithMiddleware,
     stopper: Stopper,
     network_options: NetworkOptions,
@@ -41,6 +43,36 @@ impl Stopper {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+enum Stream {
+    Main,
+    Video(String),
+    Audio(String),
+    Subtitle(String),
+}
+
+impl Stream {
+    fn extension(&self) -> String {
+        match self {
+            Self::Main => "ts".into(),
+            Self::Video(_) => "ts".into(),
+            Self::Audio(_) => "m4a".into(),
+            Self::Subtitle(_) => "vtt".into(),
+        }
+    }
+}
+
+impl Display for Stream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Main => write!(f, "main"),
+            Self::Video(n) => write!(f, "video_{}", n),
+            Self::Audio(n) => write!(f, "audio_{}", n),
+            Self::Subtitle(n) => write!(f, "subtitle_{}", n),
+        }
+    }
+}
+
 impl Livestream {
     pub async fn new(url: &Url, network_options: &NetworkOptions) -> Result<(Self, Stopper)> {
         // Create reqwest client
@@ -60,8 +92,10 @@ impl Livestream {
         let final_url = resp.url().clone();
         let bytes = resp.bytes().await?;
 
+        let mut streams = HashMap::new();
+
         // Get media playlist url
-        let media_url = match m3u8_rs::parse_playlist(&bytes) {
+        match m3u8_rs::parse_playlist(&bytes) {
             Ok((_, Playlist::MasterPlaylist(p))) => {
                 let max_stream = p
                     .variants
@@ -70,19 +104,21 @@ impl Livestream {
                     .max_by_key(|(x, _)| *x)
                     .ok_or_else(|| anyhow::anyhow!("No streams found"))?
                     .1;
-                reqwest::Url::parse(&max_stream.uri)?
+                streams.insert(Stream::Main, reqwest::Url::parse(&max_stream.uri)?);
             }
-            Ok((_, Playlist::MediaPlaylist(_))) => final_url,
+            Ok((_, Playlist::MediaPlaylist(_))) => {
+                streams.insert(Stream::Main, final_url);
+            }
             Err(e) => {
                 return Err(anyhow::anyhow!("Error parsing m3u8 playlist: {}", e));
             }
-        };
+        }
 
         let stopper = Stopper::new();
 
         Ok((
             Self {
-                url: media_url,
+                streams,
                 client,
                 stopper: stopper.clone(),
                 network_options: network_options.clone(),
@@ -95,12 +131,18 @@ impl Livestream {
         let (tx, rx) = mpsc::unbounded();
 
         // Spawn m3u8 reader task
-        let handle = {
-            let url = self.url.clone();
+        let mut handles = Vec::new();
+        for (stream, url) in &self.streams {
             let client = self.client.clone();
             let stopper = self.stopper.clone();
-            tokio::spawn(async move { m3u8_fetcher(client, stopper, tx, url).await })
-        };
+            let tx = tx.clone();
+            let stream = stream.clone();
+            let url = url.clone();
+            handles.push(tokio::spawn(async move {
+                m3u8_fetcher(client, stopper, tx, stream, url).await
+            }));
+        }
+        drop(tx); // Drop unused tx
 
         // Create segments directory if needed
         if let Some(ref p) = options.segments_directory {
@@ -108,30 +150,55 @@ impl Livestream {
         }
 
         // Generate output file names
-        let output = options.output.with_extension("ts");
-        let output_temp = options.output.with_extension("part");
+        let mut output_files = HashMap::new();
+        let mut output_file_paths = HashMap::new();
+        for stream in self.streams.keys() {
+            let mut filename = options.output.file_name().unwrap().to_owned();
+            filename.push(format!("_{}.part", stream));
+            let path = options.output.parent().unwrap().join(filename);
+            let file = fs::File::create(&path).await?;
+            output_files.insert(stream.clone(), file);
+            output_file_paths.insert(stream.clone(), path);
+        }
 
         // Download segments
-        let mut file = fs::File::create(&output_temp).await?;
+        //let mut file = fs::File::create(&output_temp).await?;
         let mut buffered = rx
-            .map(|(s, u)| fetch_segment(&self.client, u, s, options.segments_directory.as_ref()))
+            .map(|(stream, seg, u)| {
+                fetch_segment(
+                    &self.client,
+                    stream,
+                    seg,
+                    u,
+                    options.segments_directory.as_ref(),
+                )
+            })
             .buffered(self.network_options.max_simultaneous_downloads);
         while let Some(x) = buffered.next().await {
-            let bytes = x?;
+            let (stream, bytes) = x?;
             // Append segment to output file
-            file.write_all(&bytes).await?;
+            output_files
+                .get_mut(&stream)
+                .unwrap()
+                .write_all(&bytes)
+                .await?;
         }
 
-        // Rename output file
-        fs::rename(output_temp, &output).await?;
-
-        // Remux if necessary
         if options.remux {
-            remux(output).await?;
+            // Remux if necessary
+            let paths: Vec<_> = output_file_paths.values().collect();
+            remux(paths, &options.output).await?;
+        } else {
+            // Rename output files
+            for (stream, path) in &output_file_paths {
+                fs::rename(&path, path.with_extension(stream.extension())).await?;
+            }
         }
 
-        // Check join handle
-        handle.await??;
+        // Check join handles
+        for handle in handles {
+            handle.await??;
+        }
 
         Ok(())
     }
@@ -141,7 +208,8 @@ impl Livestream {
 async fn m3u8_fetcher(
     client: ClientWithMiddleware,
     notify_stop: Stopper,
-    tx: mpsc::UnboundedSender<(u64, Url)>,
+    tx: mpsc::UnboundedSender<(Stream, u64, Url)>,
+    stream: Stream,
     url: Url,
 ) -> Result<()> {
     let mut last_seq = None;
@@ -178,7 +246,7 @@ async fn m3u8_fetcher(
 
             // Download segment
             trace!("Found new segment {}", url.as_str());
-            if tx.unbounded_send((i, url)).is_err() {
+            if tx.unbounded_send((stream.clone(), i, url)).is_err() {
                 return Ok(());
             }
         }
@@ -208,10 +276,11 @@ async fn m3u8_fetcher(
 /// Download segment and save to disk if necessary
 async fn fetch_segment(
     client: &ClientWithMiddleware,
-    url: Url,
+    stream: Stream,
     segment: u64,
+    url: Url,
     segment_path: Option<impl AsRef<Path>>,
-) -> Result<Vec<u8>> {
+) -> Result<(Stream, Vec<u8>)> {
     // Fetch segment
     let bytes: Vec<u8> = client
         .get(url.clone())
@@ -224,7 +293,12 @@ async fn fetch_segment(
 
     // Save segment to disk if needed
     if let Some(p) = segment_path {
-        let filename = p.as_ref().join(format!("segment_{:010}.ts", segment));
+        let filename = p.as_ref().join(format!(
+            "segment_{}_{:010}.{}",
+            stream,
+            segment,
+            stream.extension()
+        ));
         trace!("Saving {} to {}", url.as_str(), &filename.to_string_lossy());
         let mut file = fs::File::create(&filename).await?;
         file.write_all(&bytes).await?;
@@ -232,29 +306,36 @@ async fn fetch_segment(
 
     info!("Downloaded {}", url.as_str());
 
-    Ok(bytes)
+    Ok((stream, bytes))
 }
 
-async fn remux(input: impl AsRef<Path>) -> Result<()> {
+async fn remux(inputs: Vec<impl AsRef<Path>>, output: impl AsRef<Path>) -> Result<()> {
     info!("Remuxing to mp4");
-    let output = input.as_ref().with_extension("mp4");
 
     // Call ffmpeg to remux video file
-    process::Command::new("ffmpeg")
-        .arg("-i")
-        .arg(input.as_ref())
+    let mut cmd = process::Command::new("ffmpeg");
+    for i in &inputs {
+        cmd.arg("-i").arg(i.as_ref());
+    }
+    let exit_status = cmd
         .arg("-c")
         .arg("copy")
         .arg("-movflags")
         .arg("+faststart")
-        .arg(output)
+        .arg(output.as_ref())
         .spawn()?
         .wait()
         .await?;
 
+    if !exit_status.success() {
+        return Err(anyhow::anyhow!("ffmpeg command failed"));
+    }
+
     // Delete original
-    trace!("Removing {}", input.as_ref().to_string_lossy());
-    fs::remove_file(input.as_ref()).await?;
+    for i in inputs {
+        trace!("Removing {}", i.as_ref().to_string_lossy());
+        fs::remove_file(i.as_ref()).await?;
+    }
 
     Ok(())
 }
