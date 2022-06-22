@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
 
     // Gracefully exit on ctrl-c
     {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let mut stream = {
             use tokio::signal::unix::{signal, SignalKind};
             signal(SignalKind::interrupt()).unwrap()
