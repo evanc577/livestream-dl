@@ -51,6 +51,28 @@ enum Stream {
     Subtitle(String),
 }
 
+#[derive(Clone, Debug)]
+enum Segment {
+    Initialization(Url),
+    Sequence(Url, u64),
+}
+
+impl Segment {
+    fn url(&self) -> &Url {
+        match self {
+            Self::Initialization(u) => u,
+            Self::Sequence(u, _) => u,
+        }
+    }
+
+    fn id(&self) -> String {
+        match self {
+            Self::Initialization(_) => "init".into(),
+            Self::Sequence(_, i) => format!("{:010}", i),
+        }
+    }
+}
+
 impl Stream {
     fn extension(&self) -> String {
         match self {
@@ -164,12 +186,11 @@ impl Livestream {
         // Download segments
         //let mut file = fs::File::create(&output_temp).await?;
         let mut buffered = rx
-            .map(|(stream, seg, u)| {
+            .map(|(stream, seg)| {
                 fetch_segment(
                     &self.client,
                     stream,
                     seg,
-                    u,
                     options.segments_directory.as_ref(),
                 )
             })
@@ -208,11 +229,12 @@ impl Livestream {
 async fn m3u8_fetcher(
     client: ClientWithMiddleware,
     notify_stop: Stopper,
-    tx: mpsc::UnboundedSender<(Stream, u64, Url)>,
+    tx: mpsc::UnboundedSender<(Stream, Segment)>,
     stream: Stream,
     url: Url,
 ) -> Result<()> {
     let mut last_seq = None;
+    let mut init_downloaded = false;
 
     loop {
         // Fetch playlist
@@ -237,16 +259,24 @@ async fn m3u8_fetcher(
             last_seq = Some(i);
             found_new_segments = true;
 
+            // Download initialization if needed
+            if !init_downloaded {
+                if let Some(map) = &segment.map {
+                    let init_url = parse_url(&url, &map.uri)?;
+                    trace!("Found new initialization segment {}", init_url.as_str());
+                    if tx.unbounded_send((stream.clone(), Segment::Initialization(init_url))).is_err() {
+                        return Ok(());
+                    }
+                    init_downloaded = true;
+                }
+            }
+
             // Parse URL
-            let url = match Url::parse(&segment.uri) {
-                Ok(u) => u,
-                Err(e) if e == url::ParseError::RelativeUrlWithoutBase => url.join(&segment.uri)?,
-                Err(e) => return Err(e.into()),
-            };
+            let seg_url = parse_url(&url, &segment.uri)?;
 
             // Download segment
-            trace!("Found new segment {}", url.as_str());
-            if tx.unbounded_send((stream.clone(), i, url)).is_err() {
+            trace!("Found new segment {}", seg_url.as_str());
+            if tx.unbounded_send((stream.clone(), Segment::Sequence(seg_url, i))).is_err() {
                 return Ok(());
             }
         }
@@ -277,13 +307,12 @@ async fn m3u8_fetcher(
 async fn fetch_segment(
     client: &ClientWithMiddleware,
     stream: Stream,
-    segment: u64,
-    url: Url,
+    segment: Segment,
     segment_path: Option<impl AsRef<Path>>,
 ) -> Result<(Stream, Vec<u8>)> {
     // Fetch segment
     let bytes: Vec<u8> = client
-        .get(url.clone())
+        .get(segment.url().clone())
         .send()
         .await?
         .bytes()
@@ -294,17 +323,17 @@ async fn fetch_segment(
     // Save segment to disk if needed
     if let Some(p) = segment_path {
         let filename = p.as_ref().join(format!(
-            "segment_{}_{:010}.{}",
+            "segment_{}_{}.{}",
             stream,
-            segment,
+            segment.id(),
             stream.extension()
         ));
-        trace!("Saving {} to {}", url.as_str(), &filename.to_string_lossy());
+        trace!("Saving {} to {}", segment.url().as_str(), &filename.to_string_lossy());
         let mut file = fs::File::create(&filename).await?;
         file.write_all(&bytes).await?;
     }
 
-    info!("Downloaded {}", url.as_str());
+    info!("Downloaded {}", segment.url().as_str());
 
     Ok((stream, bytes))
 }
@@ -322,7 +351,7 @@ async fn remux(inputs: Vec<impl AsRef<Path>>, output: impl AsRef<Path>) -> Resul
         .arg("copy")
         .arg("-movflags")
         .arg("+faststart")
-        .arg(output.as_ref())
+        .arg(output.as_ref().with_extension("mp4"))
         .spawn()?
         .wait()
         .await?;
@@ -338,4 +367,12 @@ async fn remux(inputs: Vec<impl AsRef<Path>>, output: impl AsRef<Path>) -> Resul
     }
 
     Ok(())
+}
+
+fn parse_url(base: &Url, url: &str) -> Result<Url> {
+    match Url::parse(url) {
+        Ok(u) => Ok(u),
+        Err(e) if e == url::ParseError::RelativeUrlWithoutBase => Ok(base.join(url)?),
+        Err(e) => Err(e.into()),
+    }
 }
