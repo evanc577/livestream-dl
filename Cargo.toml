@@ -10,7 +10,6 @@ license-file = "LICENSE"
 [dependencies]
 anyhow = "1.0"
 clap = { version = "3.2", features = ["derive"] }
-enum-map = "2.4"
 fern = { version = "0.6", features = ["colored"] }
 futures = "0.3"
 log = "0.4"
