@@ -29,6 +29,7 @@ pub struct Livestream {
 #[derive(Clone, Debug)]
 pub struct Stopper(Arc<Notify>);
 
+/// Used to signal m3u8 fetcher task to quit
 impl Stopper {
     fn new() -> Self {
         Self(Arc::new(Notify::new()))
@@ -43,14 +44,18 @@ impl Stopper {
     }
 }
 
+/// Type of stream
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum Stream {
     Main,
+
+    // Alternative media
     Video(String),
     Audio(String),
     Subtitle(String),
 }
 
+/// Type of media segment
 #[derive(Clone, Debug)]
 enum Segment {
     Initialization(Url),
@@ -58,6 +63,7 @@ enum Segment {
 }
 
 impl Segment {
+    /// URL of segment
     fn url(&self) -> &Url {
         match self {
             Self::Initialization(u) => u,
@@ -65,6 +71,7 @@ impl Segment {
         }
     }
 
+    /// String identifier of segment
     fn id(&self) -> String {
         match self {
             Self::Initialization(_) => "init".into(),
@@ -74,6 +81,7 @@ impl Segment {
 }
 
 impl Stream {
+    /// File extension for stream
     fn extension(&self) -> String {
         match self {
             Self::Main => "ts".into(),
@@ -96,6 +104,10 @@ impl Display for Stream {
 }
 
 impl Livestream {
+    /// Create a new Livestream
+    ///
+    /// If a master playlist is given, choose the highest bitrate variant and download its stream
+    /// and all of its alternative media streams
     pub async fn new(url: &Url, network_options: &NetworkOptions) -> Result<(Self, Stopper)> {
         // Create reqwest client
         let client = Client::builder()
@@ -114,9 +126,8 @@ impl Livestream {
         let final_url = resp.url().clone();
         let bytes = resp.bytes().await?;
 
+        // Parse m3u8 playlist and add streams
         let mut streams = HashMap::new();
-
-        // Get media playlist url
         match m3u8_rs::parse_playlist(&bytes) {
             Ok((_, Playlist::MasterPlaylist(p))) => {
                 // Find best variant
@@ -177,6 +188,7 @@ impl Livestream {
         ))
     }
 
+    /// Download the livestream to disk
     pub async fn download(&self, options: &DownloadOptions) -> Result<()> {
         let (tx, rx) = mpsc::unbounded();
 
@@ -192,7 +204,7 @@ impl Livestream {
                 m3u8_fetcher(client, stopper, tx, stream, url).await
             }));
         }
-        drop(tx); // Drop unused tx
+        drop(tx); // Drop unused tx to allow program to exit when the other used tx's are closed
 
         // Create segments directory if needed
         if let Some(ref p) = options.segments_directory {
@@ -376,6 +388,7 @@ async fn fetch_segment(
     Ok((stream, bytes))
 }
 
+/// Remux media files into a single mp4 file with ffmpeg
 async fn remux(inputs: Vec<impl AsRef<Path>>, output: impl AsRef<Path>) -> Result<()> {
     info!("Remuxing to mp4");
 
@@ -394,11 +407,12 @@ async fn remux(inputs: Vec<impl AsRef<Path>>, output: impl AsRef<Path>) -> Resul
         .wait()
         .await?;
 
+    // Check ffmpeg exit status
     if !exit_status.success() {
         return Err(anyhow::anyhow!("ffmpeg command failed"));
     }
 
-    // Delete original
+    // Delete original files
     for i in inputs {
         trace!("Removing {}", i.as_ref().to_string_lossy());
         fs::remove_file(i.as_ref()).await?;
@@ -407,6 +421,7 @@ async fn remux(inputs: Vec<impl AsRef<Path>>, output: impl AsRef<Path>) -> Resul
     Ok(())
 }
 
+/// Create absolute url from a possibly relative url and a base url if needed
 fn parse_url(base: &Url, url: &str) -> Result<Url> {
     match Url::parse(url) {
         Ok(u) => Ok(u),
