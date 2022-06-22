@@ -33,8 +33,8 @@ pub struct DownloadOptions {
     #[clap(short, long, value_parser, value_hint = clap::ValueHint::DirPath)]
     pub segments_directory: Option<PathBuf>,
 
-    /// Remux video file to mp4 (requires ffmpeg)
-    #[clap(short, long, value_parser, default_value_t = false)]
+    /// Remux video file to mp4 (requires ffmpeg in $PATH)
+    #[clap(long, value_parser, default_value_t = false)]
     pub remux: bool,
 }
 
@@ -46,10 +46,10 @@ pub struct NetworkOptions {
     pub max_retries: u32,
 
     /// Network requests timeout in seconds
-    #[clap(long, value_parser, default_value_t = 30)]
+    #[clap(short, long, value_parser, value_name = "SECONDS", default_value_t = 30)]
     pub timeout: u64,
 
-    /// Maximum number of simultaneous downloads
-    #[clap(long, value_parser, default_value_t = 20)]
-    pub max_simultaneous_downloads: usize,
+    /// Maximum number of concurrent downloads
+    #[clap(short = 'j', long, value_parser, default_value_t = 20)]
+    pub max_concurrent_downloads: usize,
 }

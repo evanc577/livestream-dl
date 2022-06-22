@@ -240,7 +240,7 @@ impl Livestream {
                     options.segments_directory.as_ref(),
                 )
             })
-            .buffered(self.network_options.max_simultaneous_downloads);
+            .buffered(self.network_options.max_concurrent_downloads);
         while let Some(x) = buffered.next().await {
             let (stream, bytes) = x?;
             // Append segment to output file
