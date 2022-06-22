@@ -131,40 +131,29 @@ impl Livestream {
                 // Add main stream
                 streams.insert(Stream::Main, reqwest::Url::parse(&max_stream.uri)?);
 
-                // Add audio streams
-                if let Some(group) = max_stream.audio {
+                // Closure to find alternative media with matching group id and add them to streams
+                let mut add_alternative = |group, f: fn(String) -> Stream| -> Result<()> {
                     for a in p.alternatives.iter().filter(|a| a.group_id == group) {
                         if let Some(a_url) = &a.uri {
-                            streams.insert(
-                                Stream::Audio(a.name.clone()),
-                                parse_url(url, a_url)?
-                            );
+                            streams.insert(f(a.name.clone()), parse_url(url, a_url)?);
                         }
                     }
+                    Ok(())
+                };
+
+                // Add audio streams
+                if let Some(group) = max_stream.audio {
+                    add_alternative(group, Stream::Audio)?;
                 }
 
                 // Add video streams
                 if let Some(group) = max_stream.video {
-                    for a in p.alternatives.iter().filter(|a| a.group_id == group) {
-                        if let Some(a_url) = &a.uri {
-                            streams.insert(
-                                Stream::Video(a.name.clone()),
-                                parse_url(url, a_url)?
-                            );
-                        }
-                    }
+                    add_alternative(group, Stream::Video)?;
                 }
 
                 // Add subtitle streams
                 if let Some(group) = max_stream.subtitles {
-                    for a in p.alternatives.iter().filter(|a| a.group_id == group) {
-                        if let Some(a_url) = &a.uri {
-                            streams.insert(
-                                Stream::Subtitle(a.name.clone()),
-                                parse_url(url, a_url)?
-                            );
-                        }
-                    }
+                    add_alternative(group, Stream::Subtitle)?;
                 }
             }
             Ok((_, Playlist::MediaPlaylist(_))) => {
