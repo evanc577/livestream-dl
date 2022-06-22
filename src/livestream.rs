@@ -13,7 +13,7 @@ use reqwest::{Client, Url};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies, RetryTransientMiddleware};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Notify;
+use tokio::sync::{Mutex, Notify};
 use tokio::{fs, process, time};
 
 use crate::cli::{DownloadOptions, NetworkOptions};
@@ -27,20 +27,28 @@ pub struct Livestream {
 }
 
 #[derive(Clone, Debug)]
-pub struct Stopper(Arc<Notify>);
+pub struct Stopper(Arc<(Notify, Mutex<bool>)>);
 
 /// Used to signal m3u8 fetcher task to quit
 impl Stopper {
     fn new() -> Self {
-        Self(Arc::new(Notify::new()))
+        Self(Arc::new((Notify::new(), Mutex::new(false))))
     }
 
-    async fn notified(&self) {
-        self.0.notified().await;
+    /// Wait for stopper to be notified
+    async fn wait(&self) {
+        self.0 .0.notified().await;
     }
 
-    pub fn stop(&self) {
-        self.0.notify_waiters();
+    /// Check if stopped
+    pub async fn stopped(&self) -> bool {
+        *self.0 .1.lock().await
+    }
+
+    /// Set to stopped and notify waiters
+    pub async fn stop(&self) {
+        *self.0 .1.lock().await = true;
+        self.0 .0.notify_waiters();
     }
 }
 
@@ -339,18 +347,28 @@ async fn m3u8_fetcher(
             return Ok(());
         }
 
-        if found_new_segments {
-            // Wait for target duration or return immediately if manually stopped
-            tokio::select! {
-                _ = time::sleep_until(now + Duration::from_secs_f32(media_playlist.target_duration)) => (),
-                _ = notify_stop.notified() => return Ok(()),
-            };
+        let wait_duration = if found_new_segments {
+            // Wait for target duration if new segments were found
+            Duration::from_secs_f32(media_playlist.target_duration)
         } else {
-            // Wait for half target duration or return immediately if manually stopped
-            tokio::select! {
-                _ = time::sleep_until(now + Duration::from_secs_f32(media_playlist.target_duration / 2.0)) => (),
-                _ = notify_stop.notified() => return Ok(()),
-            };
+            // Otherwise wait for half target duration
+            Duration::from_secs_f32(media_playlist.target_duration / 2.0)
+        };
+
+        // Wait until next interval or if stopped
+        tokio::select! {
+            biased;
+
+            // Not cancel safe, but this is ok because all stoppers are notified when stopped, so
+            // fairness doesn't matter
+            _ = notify_stop.wait() => {},
+
+            _ = time::sleep_until(now + wait_duration) => {},
+        };
+
+        // Return if stopped
+        if notify_stop.stopped().await {
+            return Ok(());
         }
     }
 }

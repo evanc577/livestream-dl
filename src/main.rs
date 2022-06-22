@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             stream.recv().await;
             info!("Stopping download");
-            stopper.stop();
+            stopper.stop().await;
         });
     }
 
