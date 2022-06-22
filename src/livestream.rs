@@ -190,21 +190,27 @@ impl Livestream {
 
     /// Download the livestream to disk
     pub async fn download(&self, options: &DownloadOptions) -> Result<()> {
-        let (tx, rx) = mpsc::unbounded();
-
-        // Spawn m3u8 reader task
+        // m3u8 reader task handles
         let mut handles = Vec::new();
-        for (stream, url) in &self.streams {
-            let client = self.client.clone();
-            let stopper = self.stopper.clone();
-            let tx = tx.clone();
-            let stream = stream.clone();
-            let url = url.clone();
-            handles.push(tokio::spawn(async move {
-                m3u8_fetcher(client, stopper, tx, stream, url).await
-            }));
-        }
-        drop(tx); // Drop unused tx to allow program to exit when the other used tx's are closed
+
+        let rx = {
+            // Create channel for m3u8 fetcher <-> segment downloader tasks
+            let (tx, rx) = mpsc::unbounded();
+
+            // Spawn m3u8 reader task
+            for (stream, url) in &self.streams {
+                let client = self.client.clone();
+                let stopper = self.stopper.clone();
+                let tx = tx.clone();
+                let stream = stream.clone();
+                let url = url.clone();
+                handles.push(tokio::spawn(async move {
+                    m3u8_fetcher(client, stopper, tx, stream, url).await
+                }));
+            }
+
+            rx
+        };
 
         // Create segments directory if needed
         if let Some(ref p) = options.segments_directory {
