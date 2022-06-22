@@ -119,6 +119,7 @@ impl Livestream {
         // Get media playlist url
         match m3u8_rs::parse_playlist(&bytes) {
             Ok((_, Playlist::MasterPlaylist(p))) => {
+                // Find best variant
                 let max_stream = p
                     .variants
                     .into_iter()
@@ -126,7 +127,45 @@ impl Livestream {
                     .max_by_key(|(x, _)| *x)
                     .ok_or_else(|| anyhow::anyhow!("No streams found"))?
                     .1;
+
+                // Add main stream
                 streams.insert(Stream::Main, reqwest::Url::parse(&max_stream.uri)?);
+
+                // Add audio streams
+                if let Some(group) = max_stream.audio {
+                    for a in p.alternatives.iter().filter(|a| a.group_id == group) {
+                        if let Some(a_url) = &a.uri {
+                            streams.insert(
+                                Stream::Audio(a.name.clone()),
+                                parse_url(url, a_url)?
+                            );
+                        }
+                    }
+                }
+
+                // Add video streams
+                if let Some(group) = max_stream.video {
+                    for a in p.alternatives.iter().filter(|a| a.group_id == group) {
+                        if let Some(a_url) = &a.uri {
+                            streams.insert(
+                                Stream::Video(a.name.clone()),
+                                parse_url(url, a_url)?
+                            );
+                        }
+                    }
+                }
+
+                // Add subtitle streams
+                if let Some(group) = max_stream.subtitles {
+                    for a in p.alternatives.iter().filter(|a| a.group_id == group) {
+                        if let Some(a_url) = &a.uri {
+                            streams.insert(
+                                Stream::Subtitle(a.name.clone()),
+                                parse_url(url, a_url)?
+                            );
+                        }
+                    }
+                }
             }
             Ok((_, Playlist::MediaPlaylist(_))) => {
                 streams.insert(Stream::Main, final_url);
@@ -264,7 +303,10 @@ async fn m3u8_fetcher(
                 if let Some(map) = &segment.map {
                     let init_url = parse_url(&url, &map.uri)?;
                     trace!("Found new initialization segment {}", init_url.as_str());
-                    if tx.unbounded_send((stream.clone(), Segment::Initialization(init_url))).is_err() {
+                    if tx
+                        .unbounded_send((stream.clone(), Segment::Initialization(init_url)))
+                        .is_err()
+                    {
                         return Ok(());
                     }
                     init_downloaded = true;
@@ -276,7 +318,10 @@ async fn m3u8_fetcher(
 
             // Download segment
             trace!("Found new segment {}", seg_url.as_str());
-            if tx.unbounded_send((stream.clone(), Segment::Sequence(seg_url, i))).is_err() {
+            if tx
+                .unbounded_send((stream.clone(), Segment::Sequence(seg_url, i)))
+                .is_err()
+            {
                 return Ok(());
             }
         }
@@ -328,7 +373,11 @@ async fn fetch_segment(
             segment.id(),
             stream.extension()
         ));
-        trace!("Saving {} to {}", segment.url().as_str(), &filename.to_string_lossy());
+        trace!(
+            "Saving {} to {}",
+            segment.url().as_str(),
+            &filename.to_string_lossy()
+        );
         let mut file = fs::File::create(&filename).await?;
         file.write_all(&bytes).await?;
     }
