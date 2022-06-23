@@ -1,9 +1,19 @@
 on:
-  release:
-    types: [created]
+  push:
+    tags: "*"
 
 jobs:
   release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 50
+    - uses: fregante/release-with-changelog@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+  build:
+    needs: release
     name: release ${{ matrix.target }}
     runs-on: ubuntu-latest
     strategy:
