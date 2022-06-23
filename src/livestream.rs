@@ -8,7 +8,8 @@ use anyhow::Result;
 use futures::channel::mpsc;
 use futures::StreamExt;
 use log::{info, trace};
-use m3u8_rs::Playlist;
+use m3u8_rs::{ByteRange, Playlist};
+use reqwest::header::{self, HeaderMap};
 use reqwest::{Client, Url};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies, RetryTransientMiddleware};
@@ -67,25 +68,56 @@ pub enum Stream {
 /// Type of media segment
 #[derive(Clone, Debug)]
 enum Segment {
-    Initialization(Url),
-    Sequence(Url, u64),
+    Initialization {
+        url: Url,
+        byte_range: Option<ByteRange>,
+    },
+    Sequence {
+        url: Url,
+        byte_range: Option<ByteRange>,
+        n: u64,
+    },
 }
 
 impl Segment {
     /// URL of segment
     fn url(&self) -> &Url {
         match self {
-            Self::Initialization(u) => u,
-            Self::Sequence(u, _) => u,
+            Self::Initialization { url: u, .. } => u,
+            Self::Sequence { url: u, .. } => u,
         }
     }
 
     /// String identifier of segment
     fn id(&self) -> String {
         match self {
-            Self::Initialization(_) => "init".into(),
-            Self::Sequence(_, i) => format!("{:010}", i),
+            Self::Initialization { .. } => "init".into(),
+            Self::Sequence { n: i, .. } => format!("{:010}", i),
         }
+    }
+
+    fn byte_range(&self) -> Option<String> {
+        let range = match self {
+            Self::Initialization {
+                byte_range: None, ..
+            } => return None,
+            Self::Sequence {
+                byte_range: None, ..
+            } => return None,
+            Self::Initialization {
+                byte_range: Some(b),
+                ..
+            } => b,
+            Self::Sequence {
+                byte_range: Some(b),
+                ..
+            } => b,
+        };
+
+        let start = range.offset.unwrap_or(0);
+        let end = start + range.length.saturating_sub(1);
+
+        Some(format!("bytes={}-{}", start, end))
     }
 }
 
@@ -323,7 +355,13 @@ async fn m3u8_fetcher(
                     let init_url = parse_url(&url, &map.uri)?;
                     trace!("Found new initialization segment {}", init_url.as_str());
                     if tx
-                        .unbounded_send((stream.clone(), Segment::Initialization(init_url)))
+                        .unbounded_send((
+                            stream.clone(),
+                            Segment::Initialization {
+                                url: init_url,
+                                byte_range: map.byte_range.clone(),
+                            },
+                        ))
                         .is_err()
                     {
                         return Ok(());
@@ -338,7 +376,14 @@ async fn m3u8_fetcher(
             // Download segment
             trace!("Found new segment {}", seg_url.as_str());
             if tx
-                .unbounded_send((stream.clone(), Segment::Sequence(seg_url, i)))
+                .unbounded_send((
+                    stream.clone(),
+                    Segment::Sequence {
+                        url: seg_url,
+                        byte_range: segment.byte_range.clone(),
+                        n: i,
+                    },
+                ))
                 .is_err()
             {
                 return Ok(());
@@ -384,9 +429,15 @@ async fn fetch_segment(
     segment: Segment,
     segment_path: Option<impl AsRef<Path>>,
 ) -> Result<(Stream, Vec<u8>)> {
+    let mut header_map = HeaderMap::new();
+    if let Some(range) = segment.byte_range() {
+        header_map.insert(header::RANGE, header::HeaderValue::from_str(&range)?);
+    }
+
     // Fetch segment
     let bytes: Vec<u8> = client
         .get(segment.url().clone())
+        .headers(header_map)
         .send()
         .await?
         .bytes()
