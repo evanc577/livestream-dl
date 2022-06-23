@@ -148,7 +148,7 @@ impl Livestream {
                     .1;
 
                 // Add main stream
-                streams.insert(Stream::Main, reqwest::Url::parse(&max_stream.uri)?);
+                streams.insert(Stream::Main, parse_url(url, &max_stream.uri)?);
 
                 // Closure to find alternative media with matching group id and add them to streams
                 let mut add_alternative = |group, f: fn(String) -> Stream| -> Result<()> {
