@@ -430,8 +430,9 @@ async fn fetch_segment(
     segment_path: Option<impl AsRef<Path>>,
 ) -> Result<(Stream, Vec<u8>)> {
     let mut header_map = HeaderMap::new();
-    if let Some(range) = segment.byte_range() {
-        header_map.insert(header::RANGE, header::HeaderValue::from_str(&range)?);
+    let byte_range = segment.byte_range();
+    if let Some(ref range) = byte_range {
+        header_map.insert(header::RANGE, header::HeaderValue::from_str(range)?);
     }
 
     // Fetch segment
@@ -462,7 +463,11 @@ async fn fetch_segment(
         file.write_all(&bytes).await?;
     }
 
-    info!("Downloaded {}", segment.url().as_str());
+    info!(
+        "Downloaded {} {}",
+        segment.url().as_str(),
+        byte_range.unwrap_or_else(|| "".into())
+    );
 
     Ok((stream, bytes))
 }
