@@ -14,9 +14,10 @@ use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies, RetryTransientMiddleware};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, Notify};
-use tokio::{fs, process, time};
+use tokio::{fs, time};
 
 use crate::cli::{DownloadOptions, NetworkOptions};
+use crate::mux::remux;
 
 #[derive(Debug)]
 pub struct Livestream {
@@ -54,13 +55,13 @@ impl Stopper {
 
 /// Type of stream
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-enum Stream {
+pub enum Stream {
     Main,
 
     // Alternative media
-    Video(String),
-    Audio(String),
-    Subtitle(String),
+    Video { name: String, lang: Option<String> },
+    Audio { name: String, lang: Option<String> },
+    Subtitle { name: String, lang: Option<String> },
 }
 
 /// Type of media segment
@@ -93,9 +94,9 @@ impl Stream {
     fn extension(&self) -> String {
         match self {
             Self::Main => "ts".into(),
-            Self::Video(_) => "ts".into(),
-            Self::Audio(_) => "m4a".into(),
-            Self::Subtitle(_) => "vtt".into(),
+            Self::Video { .. } => "ts".into(),
+            Self::Audio { .. } => "m4a".into(),
+            Self::Subtitle { .. } => "vtt".into(),
         }
     }
 }
@@ -104,9 +105,9 @@ impl Display for Stream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Main => write!(f, "main"),
-            Self::Video(n) => write!(f, "video_{}", n),
-            Self::Audio(n) => write!(f, "audio_{}", n),
-            Self::Subtitle(n) => write!(f, "subtitle_{}", n),
+            Self::Video { name: n, .. } => write!(f, "video_{}", n),
+            Self::Audio { name: n, .. } => write!(f, "audio_{}", n),
+            Self::Subtitle { name: n, .. } => write!(f, "subtitle_{}", n),
         }
     }
 }
@@ -151,28 +152,32 @@ impl Livestream {
                 streams.insert(Stream::Main, parse_url(url, &max_stream.uri)?);
 
                 // Closure to find alternative media with matching group id and add them to streams
-                let mut add_alternative = |group, f: fn(String) -> Stream| -> Result<()> {
-                    for a in p.alternatives.iter().filter(|a| a.group_id == group) {
-                        if let Some(a_url) = &a.uri {
-                            streams.insert(f(a.name.clone()), parse_url(url, a_url)?);
+                let mut add_alternative =
+                    |group, f: fn(String, Option<String>) -> Stream| -> Result<()> {
+                        for a in p.alternatives.iter().filter(|a| a.group_id == group) {
+                            if let Some(a_url) = &a.uri {
+                                streams.insert(
+                                    f(a.name.clone(), a.language.clone()),
+                                    parse_url(url, a_url)?,
+                                );
+                            }
                         }
-                    }
-                    Ok(())
-                };
+                        Ok(())
+                    };
 
                 // Add audio streams
                 if let Some(group) = max_stream.audio {
-                    add_alternative(group, Stream::Audio)?;
+                    add_alternative(group, |n, l| Stream::Audio { name: n, lang: l })?;
                 }
 
                 // Add video streams
                 if let Some(group) = max_stream.video {
-                    add_alternative(group, Stream::Video)?;
+                    add_alternative(group, |n, l| Stream::Video { name: n, lang: l })?;
                 }
 
                 // Add subtitle streams
                 if let Some(group) = max_stream.subtitles {
-                    add_alternative(group, Stream::Subtitle)?;
+                    add_alternative(group, |n, l| Stream::Subtitle { name: n, lang: l })?;
                 }
             }
             Ok((_, Playlist::MediaPlaylist(_))) => {
@@ -261,8 +266,7 @@ impl Livestream {
 
         if options.remux {
             // Remux if necessary
-            let paths: Vec<_> = output_file_paths.values().collect();
-            remux(paths, &options.output).await?;
+            remux(output_file_paths, &options.output).await?;
         } else {
             // Rename output files
             for (stream, path) in &output_file_paths {
@@ -410,39 +414,6 @@ async fn fetch_segment(
     info!("Downloaded {}", segment.url().as_str());
 
     Ok((stream, bytes))
-}
-
-/// Remux media files into a single mp4 file with ffmpeg
-async fn remux(inputs: Vec<impl AsRef<Path>>, output: impl AsRef<Path>) -> Result<()> {
-    info!("Remuxing to mp4");
-
-    // Call ffmpeg to remux video file
-    let mut cmd = process::Command::new("ffmpeg");
-    for i in &inputs {
-        cmd.arg("-i").arg(i.as_ref());
-    }
-    let exit_status = cmd
-        .arg("-c")
-        .arg("copy")
-        .arg("-movflags")
-        .arg("+faststart")
-        .arg(output.as_ref().with_extension("mp4"))
-        .spawn()?
-        .wait()
-        .await?;
-
-    // Check ffmpeg exit status
-    if !exit_status.success() {
-        return Err(anyhow::anyhow!("ffmpeg command failed"));
-    }
-
-    // Delete original files
-    for i in inputs {
-        trace!("Removing {}", i.as_ref().to_string_lossy());
-        fs::remove_file(i.as_ref()).await?;
-    }
-
-    Ok(())
 }
 
 /// Create absolute url from a possibly relative url and a base url if needed
