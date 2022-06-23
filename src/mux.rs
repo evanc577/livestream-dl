@@ -70,11 +70,12 @@ pub async fn remux(
         .arg("copy")
         .arg("-c:s")
         .arg("mov_text")
+        .arg("-dn")
         .arg("-movflags")
         .arg("+faststart")
         .arg(output.as_ref().with_extension("mp4"));
 
-    dbg!(&cmd);
+    trace!("{:?}", cmd);
     let exit_status = cmd.status().await?;
 
     // Check ffmpeg exit status
