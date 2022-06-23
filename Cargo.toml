@@ -4,7 +4,10 @@ version = "0.2.0"
 edition = "2021"
 build = "build.rs"
 license-file = "LICENSE"
-publish = false
+readme = "README.md"
+description = "An m3u8 livestream downloader"
+repository = "https://github.com/evanc577/livestream-dl"
+categories = ["command-line-utilities", "multimedia"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
