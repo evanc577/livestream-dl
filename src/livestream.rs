@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::path::Path;
+use std::hash::Hash;
+use std::ops::Deref;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -66,19 +68,45 @@ pub enum Stream {
 }
 
 /// Type of media segment
-#[derive(Clone, Debug)]
-enum Segment {
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum Segment {
     Initialization {
         url: Url,
-        byte_range: Option<ByteRange>,
+        byte_range: Option<HashableByteRange>,
     },
     Sequence {
         url: Url,
-        byte_range: Option<ByteRange>,
+        byte_range: Option<HashableByteRange>,
         discon_seq: u64,
         seq: u64,
     },
 }
+
+#[derive(Clone, Eq, Debug)]
+pub struct HashableByteRange(ByteRange);
+
+impl Deref for HashableByteRange {
+    type Target = ByteRange;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl PartialEq for HashableByteRange {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Hash for HashableByteRange {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.length.hash(state);
+        self.0.offset.hash(state);
+    }
+}
+
+type SegmentIdData = (Stream, Segment, Vec<u8>);
 
 impl Segment {
     /// URL of segment
@@ -267,6 +295,7 @@ impl Livestream {
         fs::create_dir_all(&segments_directory).await?;
 
         // Generate output file names
+        /*
         let mut output_files = HashMap::new();
         let mut output_file_paths = HashMap::new();
         for stream in self.streams.keys() {
@@ -277,30 +306,36 @@ impl Livestream {
             output_files.insert(stream.clone(), file);
             output_file_paths.insert(stream.clone(), path);
         }
+        */
+
+        // Save initializations for each stream
+        let mut init_map = HashMap::new();
+
+        // Save paths for each downloaded segment
+        let mut downloaded_segments = HashMap::new();
 
         // Download segments
-        //let mut file = fs::File::create(&output_temp).await?;
         let mut buffered = rx
-            .map(|(stream, seg)| fetch_segment(&self.client, stream, seg, &segments_directory))
+            .map(|(stream, seg)| fetch_segment(&self.client, stream, seg))
             .buffered(self.network_options.max_concurrent_downloads);
         while let Some(x) = buffered.next().await {
-            let (stream, bytes) = x?;
-            // Append segment to output file
-            output_files
-                .get_mut(&stream)
-                .unwrap()
-                .write_all(&bytes)
-                .await?;
+            save_segment(
+                x?,
+                &mut init_map,
+                &mut downloaded_segments,
+                &segments_directory,
+            )
+            .await?;
         }
 
         if let Some(remux_path) = &options.remux {
             // Remux if necessary
-            remux(output_file_paths, remux_path).await?;
+            remux(downloaded_segments, &options.output, remux_path).await?;
         } else {
             // Rename output files
-            for (stream, path) in &output_file_paths {
-                fs::rename(&path, path.with_extension(stream.extension())).await?;
-            }
+            //for (stream, path) in &output_file_paths {
+            //fs::rename(&path, path.with_extension(stream.extension())).await?;
+            //}
         }
 
         // Check join handles
@@ -364,7 +399,10 @@ async fn m3u8_fetcher(
                             stream.clone(),
                             Segment::Initialization {
                                 url: init_url,
-                                byte_range: map.byte_range.clone(),
+                                byte_range: map
+                                    .byte_range
+                                    .as_ref()
+                                    .map(|b| HashableByteRange(b.clone())),
                             },
                         ))
                         .is_err()
@@ -385,7 +423,10 @@ async fn m3u8_fetcher(
                     stream.clone(),
                     Segment::Sequence {
                         url: seg_url,
-                        byte_range: segment.byte_range.clone(),
+                        byte_range: segment
+                            .byte_range
+                            .as_ref()
+                            .map(|b| HashableByteRange(b.clone())),
                         discon_seq,
                         seq,
                     },
@@ -433,8 +474,7 @@ async fn fetch_segment(
     client: &ClientWithMiddleware,
     stream: Stream,
     segment: Segment,
-    segment_path: impl AsRef<Path>,
-) -> Result<(Stream, Vec<u8>)> {
+) -> Result<SegmentIdData> {
     let mut header_map = HeaderMap::new();
     let byte_range = segment.byte_range();
     if let Some(ref range) = byte_range {
@@ -452,28 +492,13 @@ async fn fetch_segment(
         .into_iter()
         .collect();
 
-    // Save segment to disk
-    let filename = segment_path.as_ref().join(format!(
-        "segment_{}_{}.{}",
-        stream,
-        segment.id(),
-        stream.extension()
-    ));
-    trace!(
-        "Saving {} to {}",
-        segment.url().as_str(),
-        &filename.to_string_lossy()
-    );
-    let mut file = fs::File::create(&filename).await?;
-    file.write_all(&bytes).await?;
-
     info!(
         "Downloaded {} {}",
         segment.url().as_str(),
         byte_range.unwrap_or_else(|| "".into())
     );
 
-    Ok((stream, bytes))
+    Ok((stream, segment, bytes))
 }
 
 /// Create absolute url from a possibly relative url and a base url if needed
@@ -483,4 +508,50 @@ fn parse_url(base: &Url, url: &str) -> Result<Url> {
         Err(e) if e == url::ParseError::RelativeUrlWithoutBase => Ok(base.join(url)?),
         Err(e) => Err(e.into()),
     }
+}
+
+async fn save_segment(
+    (stream, segment, bytes): SegmentIdData,
+    init_map: &mut HashMap<Stream, Vec<u8>>,
+    downloaded_segments: &mut HashMap<Stream, Vec<(Segment, PathBuf)>>,
+    segments_directory: impl AsRef<Path>,
+) -> Result<()> {
+    if matches!(segment, Segment::Initialization { .. }) {
+        // If segment is initialization, save data for later use
+        init_map.insert(stream.clone(), bytes);
+    } else {
+        // Save segment to disk
+        let file_path = segments_directory.as_ref().join(format!(
+            "segment_{}_{}.{}",
+            stream,
+            segment.id(),
+            stream.extension()
+        ));
+        trace!("saving to {:?}", &file_path);
+        let mut file = fs::File::create(&file_path).await?;
+
+        // If initialization exists, write it first
+        if let Some(init) = init_map.get(&stream) {
+            file.write_all(init).await?;
+        }
+
+        // Write segment
+        file.write_all(&bytes).await?;
+
+        // Remember path
+        downloaded_segments
+            .entry(stream)
+            .or_default()
+            .push((segment, file_path));
+    }
+
+    /*
+    // Append segment to output file
+    output_files
+        .get_mut(&stream)
+        .unwrap()
+        .write_all(&bytes)
+        .await?;
+        */
+    Ok(())
 }
