@@ -81,18 +81,28 @@ pub async fn remux(
             cmd.arg("-map").arg(i.to_string());
         }
 
-        // Add stream language if available
-        let mut add_lang = |t, lang, count| {
+        // Closure to add stream metadata if available
+        let mut add_lang = |stream: &Stream, t, lang, count| {
+            // Language
             if let Some(l) = lang {
                 if let Ok(l) = to_iso639_2(l) {
                     cmd.arg(format!("-metadata:s:{}:{}", t, count))
                         .arg(format!("language={}", l));
                 }
             }
+
+            // Name
+            if let Some(n) = stream.name() {
+                cmd.arg(format!("-metadata:s:{}:{}", t, count))
+                    .arg(format!("title={}", n))
+                    .arg(format!("-metadata:s:{}:{}", t, count))
+                    .arg(format!("handler={}", n));
+            }
+
             count + 1
         };
 
-        // Set stream languages
+        // Set stream metadata
         let mut video_count = 0;
         let mut audio_count = 0;
         let mut subtitle_count = 0;
@@ -102,13 +112,13 @@ pub async fn remux(
                     video_count += 1;
                 }
                 Stream::Video { lang: l, .. } => {
-                    video_count = add_lang("v", l.as_ref(), video_count);
+                    video_count = add_lang(stream, "v", l.as_ref(), video_count);
                 }
                 Stream::Audio { lang: l, .. } => {
-                    audio_count = add_lang("a", l.as_ref(), audio_count);
+                    audio_count = add_lang(stream, "a", l.as_ref(), audio_count);
                 }
                 Stream::Subtitle { lang: l, .. } => {
-                    subtitle_count = add_lang("s", l.as_ref(), subtitle_count);
+                    subtitle_count = add_lang(stream, "s", l.as_ref(), subtitle_count);
                 }
             }
         }
@@ -123,7 +133,8 @@ pub async fn remux(
                 .to_owned();
             file_name.push(format!("_{:010}", discon_seq));
             remux_output.as_ref().parent().unwrap().join(file_name)
-        }.with_extension("mp4");
+        }
+        .with_extension("mp4");
 
         info!("ffmpeg mux to {:?}", &output_path);
 
@@ -147,8 +158,14 @@ pub async fn remux(
 
         trace!("{:?}", cmd);
         let output = cmd.output().await?;
-        trace!("ffmpeg stdout: {:#?}", String::from_utf8_lossy(&output.stdout));
-        trace!("ffmpeg stderr: {:#?}", String::from_utf8_lossy(&output.stderr));
+        trace!(
+            "ffmpeg stdout: {:#?}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        trace!(
+            "ffmpeg stderr: {:#?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
 
         // Check ffmpeg exit status
         if !output.status.success() {
@@ -231,8 +248,14 @@ async fn ffmpeg_concat(input_paths: &[impl AsRef<Path>], output: impl AsRef<Path
 
     trace!("{:?}", cmd);
     let output = cmd.output().await?;
-    trace!("ffmpeg stdout: {:#?}", String::from_utf8_lossy(&output.stdout));
-    trace!("ffmpeg stderr: {:#?}", String::from_utf8_lossy(&output.stderr));
+    trace!(
+        "ffmpeg stdout: {:#?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    trace!(
+        "ffmpeg stderr: {:#?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Check ffmpeg exit status
     if !output.status.success() {

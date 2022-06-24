@@ -164,6 +164,16 @@ impl Stream {
             Self::Subtitle { .. } => "vtt".into(),
         }
     }
+
+    /// Name of stream if available
+    pub fn name(&self) -> Option<String> {
+        match self {
+            Self::Main => None,
+            Self::Video { name: n, .. } => Some(n.clone()),
+            Self::Audio { name: n, .. } => Some(n.clone()),
+            Self::Subtitle { name: n, .. } => Some(n.clone()),
+        }
+    }
 }
 
 impl Display for Stream {
