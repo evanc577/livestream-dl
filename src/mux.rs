@@ -69,6 +69,7 @@ pub async fn remux(
     for (discon_seq, concatted_streams) in &discons {
         // Call ffmpeg to remux video file
         let mut cmd = process::Command::new("ffmpeg");
+        cmd.arg("-y").arg("-copyts");
 
         // Set ffmpeg input files
         for (_, path) in concatted_streams {
@@ -122,12 +123,17 @@ pub async fn remux(
                 .to_owned();
             file_name.push(format!("_{:010}", discon_seq));
             remux_output.as_ref().parent().unwrap().join(file_name)
-        };
+        }.with_extension("mp4");
 
         info!("ffmpeg mux to {:?}", &output_path);
 
         // Set remaining ffmpeg args and run ffmpeg
-        cmd.arg("-y")
+        cmd.arg("-muxpreload")
+            .arg("0")
+            .arg("-muxdelay")
+            .arg("0")
+            .arg("-avoid_negative_ts")
+            .arg("make_zero")
             .arg("-c:v")
             .arg("copy")
             .arg("-c:a")
@@ -137,12 +143,12 @@ pub async fn remux(
             .arg("-dn")
             .arg("-movflags")
             .arg("+faststart")
-            .arg(output_path.with_extension("mp4"));
+            .arg(output_path);
 
         trace!("{:?}", cmd);
         let output = cmd.output().await?;
-        trace!("{:?}", String::from_utf8_lossy(&output.stdout));
-        trace!("{:?}", String::from_utf8_lossy(&output.stderr));
+        trace!("ffmpeg stdout: {:#?}", String::from_utf8_lossy(&output.stdout));
+        trace!("ffmpeg stderr: {:#?}", String::from_utf8_lossy(&output.stderr));
 
         // Check ffmpeg exit status
         if !output.status.success() {
@@ -225,8 +231,8 @@ async fn ffmpeg_concat(input_paths: &[impl AsRef<Path>], output: impl AsRef<Path
 
     trace!("{:?}", cmd);
     let output = cmd.output().await?;
-    trace!("{:?}", String::from_utf8_lossy(&output.stdout));
-    trace!("{:?}", String::from_utf8_lossy(&output.stderr));
+    trace!("ffmpeg stdout: {:#?}", String::from_utf8_lossy(&output.stdout));
+    trace!("ffmpeg stderr: {:#?}", String::from_utf8_lossy(&output.stderr));
 
     // Check ffmpeg exit status
     if !output.status.success() {
