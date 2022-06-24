@@ -20,7 +20,9 @@ use tokio::sync::{Mutex, Notify};
 use tokio::{fs, time};
 
 use crate::cli::{DownloadOptions, NetworkOptions};
+use crate::encryption::Encryption;
 use crate::mux::remux;
+use crate::utils::make_absolute_url;
 
 #[derive(Debug)]
 pub struct Livestream {
@@ -224,7 +226,7 @@ impl Livestream {
                     .1;
 
                 // Add main stream
-                streams.insert(Stream::Main, parse_url(url, &max_stream.uri)?);
+                streams.insert(Stream::Main, make_absolute_url(url, &max_stream.uri)?);
 
                 // Closure to find alternative media with matching group id and add them to streams
                 let mut add_alternative =
@@ -233,7 +235,7 @@ impl Livestream {
                             if let Some(a_url) = &a.uri {
                                 streams.insert(
                                     f(a.name.clone(), a.language.clone()),
-                                    parse_url(url, a_url)?,
+                                    make_absolute_url(url, a_url)?,
                                 );
                             }
                         }
@@ -312,7 +314,7 @@ impl Livestream {
 
         // Download segments
         let mut buffered = rx
-            .map(|(stream, seg)| fetch_segment(&self.client, stream, seg))
+            .map(|(stream, seg, encryption)| fetch_segment(&self.client, stream, seg, encryption))
             .buffered(self.network_options.max_concurrent_downloads);
         while let Some(x) = buffered.next().await {
             save_segment(
@@ -343,7 +345,7 @@ impl Livestream {
 async fn m3u8_fetcher(
     client: ClientWithMiddleware,
     notify_stop: Stopper,
-    tx: mpsc::UnboundedSender<(Stream, Segment)>,
+    tx: mpsc::UnboundedSender<(Stream, Segment, Encryption)>,
     stream: Stream,
     url: Url,
 ) -> Result<()> {
@@ -362,6 +364,7 @@ async fn m3u8_fetcher(
 
         // Loop through media segments
         let mut discon_offset = 0;
+        let mut encryption = Encryption::None;
         for (seq, segment) in (media_playlist.media_sequence..).zip(media_playlist.segments.iter())
         {
             // Calculate segment discontinuity
@@ -377,6 +380,11 @@ async fn m3u8_fetcher(
                 }
             }
 
+            // Check encryption
+            if let Some(key) = &segment.key {
+                encryption = Encryption::new(&client, key, &url, seq).await?;
+            }
+
             // Segment is new
             last_seg = Some((discon_seq, seq));
             found_new_segments = true;
@@ -384,7 +392,7 @@ async fn m3u8_fetcher(
             // Download initialization if needed
             if !init_downloaded {
                 if let Some(map) = &segment.map {
-                    let init_url = parse_url(&url, &map.uri)?;
+                    let init_url = make_absolute_url(&url, &map.uri)?;
                     trace!("Found new initialization segment {}", init_url.as_str());
                     if tx
                         .unbounded_send((
@@ -396,6 +404,7 @@ async fn m3u8_fetcher(
                                     .as_ref()
                                     .map(|b| HashableByteRange(b.clone())),
                             },
+                            Encryption::None,
                         ))
                         .is_err()
                     {
@@ -406,7 +415,7 @@ async fn m3u8_fetcher(
             }
 
             // Parse URL
-            let seg_url = parse_url(&url, &segment.uri)?;
+            let seg_url = make_absolute_url(&url, &segment.uri)?;
 
             // Download segment
             trace!("Found new segment {}", seg_url.as_str());
@@ -422,6 +431,7 @@ async fn m3u8_fetcher(
                         discon_seq,
                         seq,
                     },
+                    encryption.clone(),
                 ))
                 .is_err()
             {
@@ -466,6 +476,7 @@ async fn fetch_segment(
     client: &ClientWithMiddleware,
     stream: Stream,
     segment: Segment,
+    encryption: Encryption,
 ) -> Result<SegmentIdData> {
     let mut header_map = HeaderMap::new();
     let byte_range = segment.byte_range();
@@ -484,6 +495,9 @@ async fn fetch_segment(
         .into_iter()
         .collect();
 
+    // Decrypt
+    let bytes = encryption.decrypt(&bytes)?;
+
     info!(
         "Downloaded {} {}",
         segment.url().as_str(),
@@ -491,15 +505,6 @@ async fn fetch_segment(
     );
 
     Ok((stream, segment, bytes))
-}
-
-/// Create absolute url from a possibly relative url and a base url if needed
-fn parse_url(base: &Url, url: &str) -> Result<Url> {
-    match Url::parse(url) {
-        Ok(u) => Ok(u),
-        Err(e) if e == url::ParseError::RelativeUrlWithoutBase => Ok(base.join(url)?),
-        Err(e) => Err(e.into()),
-    }
 }
 
 async fn save_segment(

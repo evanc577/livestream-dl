@@ -12,10 +12,13 @@ categories = ["command-line-utilities", "multimedia"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+aes = "0.8"
 anyhow = "1.0"
+cbc = { version = "0.1", features = ["std"] }
 clap = { version = "3.2", features = ["derive"] }
 fern = { version = "0.6", features = ["colored"] }
 futures = "0.3"
+hex = "0.4"
 isolang = "2.1"
 log = "0.4"
 m3u8-rs = "4.0"

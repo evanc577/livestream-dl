@@ -1,6 +1,8 @@
 mod cli;
 mod livestream;
 mod mux;
+mod encryption;
+mod utils;
 
 use std::io;
 use std::path::Path;

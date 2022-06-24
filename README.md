@@ -10,7 +10,7 @@ An experimental m3u8 livestream downloader
 - [x] Save individual media segments separately
 - [x] Download alternative streams
 - [x] Byte-range for URIs
-- [x] Support discontinuities
+- [x] Discontinuities
+- [x] Decryption
 - [ ] Cookies
 - [ ] Manual quality selection
-- [ ] Encryption
