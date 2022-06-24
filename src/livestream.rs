@@ -421,7 +421,7 @@ async fn m3u8_fetcher(
                                     .as_ref()
                                     .map(|b| HashableByteRange(b.clone())),
                             },
-                            Encryption::None,
+                            encryption.clone(),
                         ))
                         .is_err()
                     {

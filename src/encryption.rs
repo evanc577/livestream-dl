@@ -29,8 +29,8 @@ impl Encryption {
         seq: u64,
     ) -> Result<Self> {
         let encryption = match &m3u8_key {
-            x if x.method == "NONE" => Self::None,
-            k @ x if x.method == "AES-128" => {
+            k if k.method == "NONE" => Self::None,
+            k if k.method == "AES-128" => {
                 if let Some(uri) = &k.uri {
                     // Bail if keyformat exists but is not "identity"
                     if let Some(keyformat) = &k.keyformat {
@@ -49,11 +49,13 @@ impl Encryption {
                     // Parse IV
                     let mut iv = [0_u8; 16];
                     if let Some(iv_str) = &k.iv {
+                        // IV is given separately
                         let iv_str = iv_str.trim_start_matches("0x");
                         hex::decode_to_slice(iv_str, &mut iv as &mut [u8])?;
                     } else {
-                        let be_bytes = seq.to_be_bytes();
-                        iv[8..].copy_from_slice(&be_bytes);
+                        // Compute IV from segment sequence
+                        iv[(16 - std::mem::size_of_val(&seq))..]
+                            .copy_from_slice(&seq.to_be_bytes());
                     }
 
                     // Success
@@ -63,7 +65,7 @@ impl Encryption {
                     return Err(anyhow::anyhow!("No URI found for AES-128 key"));
                 }
             }
-            k @ x if x.method == "SAMPLE-AES" => {
+            k if k.method == "SAMPLE-AES" => {
                 return Err(anyhow::anyhow!(
                     "Unimplemented encryption method: {}",
                     k.method
