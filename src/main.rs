@@ -11,11 +11,18 @@ use anyhow::Result;
 use clap::Parser;
 use fern::colors::{Color, ColoredLevelConfig};
 use livestream::Livestream;
-use log::{info, LevelFilter};
+use log::{info, LevelFilter, error};
 use tokio::fs;
 
+fn main() {
+    if let Err(e) = run() {
+        error!("{}", e);
+        std::process::exit(1);
+    }
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn run() -> Result<()> {
     let args = cli::Args::parse();
     create_output_dir(&args.download_options.output).await?;
     setup_logger(&args.download_options.output)?;
@@ -51,13 +58,12 @@ async fn main() -> Result<()> {
 async fn create_output_dir(output_dir: impl AsRef<Path>) -> Result<()> {
     if output_dir.as_ref().is_dir() {
         eprintln!(
-            "Using existing output directory {:?}. This may overwrite any existing files.",
+            "Found existing output directory {:?}, existing files may be overwritten.",
             output_dir.as_ref()
         );
-        eprint!("Is ths OK? [Y/n] ");
+        eprint!("Is ths OK? [y/N] ");
         let mut response = String::new();
-        let stdin = io::stdin(); // We get `Stdin` here.
-        stdin.read_line(&mut response)?;
+        io::stdin().read_line(&mut response)?;
         if response.trim().to_lowercase() != "y" {
             return Err(anyhow::anyhow!("Not downloading into existing directory"));
         }
