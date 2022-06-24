@@ -1,6 +1,6 @@
 use reqwest::Url;
 
-use super::HashableByteRange;
+use super::{HashableByteRange, MediaFormat};
 
 /// Type of media segment
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -14,6 +14,7 @@ pub enum Segment {
         byte_range: Option<HashableByteRange>,
         discon_seq: u64,
         seq: u64,
+        format: MediaFormat,
     },
 }
 

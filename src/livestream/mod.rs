@@ -1,5 +1,6 @@
 mod encryption;
 mod hashable_byte_range;
+mod media_format;
 mod playlist_fetcher;
 mod segment;
 mod stopper;
@@ -26,6 +27,7 @@ use tokio::io::AsyncWriteExt;
 
 pub use self::encryption::Encryption;
 pub use self::hashable_byte_range::HashableByteRange;
+pub use self::media_format::MediaFormat;
 use self::playlist_fetcher::m3u8_fetcher;
 pub use self::segment::Segment;
 pub use self::stopper::Stopper;
@@ -45,16 +47,6 @@ pub struct Livestream {
 type SegmentIdData = (Stream, Segment, Vec<u8>);
 
 impl Stream {
-    /// File extension for stream
-    fn extension(&self) -> String {
-        match self {
-            Self::Main => "ts".into(),
-            Self::Video { .. } => "ts".into(),
-            Self::Audio { .. } => "m4a".into(),
-            Self::Subtitle { .. } => "vtt".into(),
-        }
-    }
-
     /// Name of stream if available
     pub fn name(&self) -> Option<String> {
         match self {
@@ -282,38 +274,42 @@ async fn fetch_segment(
 }
 
 async fn save_segment(
-    (stream, segment, bytes): SegmentIdData,
+    (stream, segment, mut bytes): SegmentIdData,
     init_map: &mut HashMap<Stream, Vec<u8>>,
     downloaded_segments: &mut HashMap<Stream, Vec<(Segment, PathBuf)>>,
     segments_directory: impl AsRef<Path>,
 ) -> Result<()> {
-    if matches!(segment, Segment::Initialization { .. }) {
-        // If segment is initialization, save data for later use
-        init_map.insert(stream.clone(), bytes);
-    } else {
-        // Save segment to disk
-        let file_path = segments_directory.as_ref().join(format!(
-            "segment_{}_{}.{}",
-            stream,
-            segment.id(),
-            stream.extension()
-        ));
-        trace!("saving to {:?}", &file_path);
-        let mut file = fs::File::create(&file_path).await?;
-
-        // If initialization exists, write it first
-        if let Some(init) = init_map.get(&stream) {
-            file.write_all(init).await?;
+    match &segment {
+        Segment::Initialization { .. } => {
+            // If segment is initialization, save data for later use
+            init_map.insert(stream.clone(), bytes);
         }
+        Segment::Sequence { .. } => {
+            // If initialization exists, prepend it first
+            if let Some(init) = init_map.get(&stream) {
+                bytes = init.iter().chain(bytes.iter()).copied().collect();
+            }
 
-        // Write segment
-        file.write_all(&bytes).await?;
+            trace!("Trying to detect format for segment: {:?}", segment);
+            let format = MediaFormat::detect(bytes.clone()).await?;
 
-        // Remember path
-        downloaded_segments
-            .entry(stream)
-            .or_default()
-            .push((segment, file_path));
+            // Save segment to disk
+            let file_path = segments_directory.as_ref().join(format!(
+                "segment_{}_{}.{}",
+                stream,
+                segment.id(),
+                format.extension()
+            ));
+            trace!("saving to {:?}", &file_path);
+            let mut file = fs::File::create(&file_path).await?;
+            file.write_all(&bytes).await?;
+
+            // Remember path
+            downloaded_segments
+                .entry(stream)
+                .or_default()
+                .push((segment, file_path));
+        }
     }
 
     Ok(())

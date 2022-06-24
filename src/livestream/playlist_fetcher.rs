@@ -8,7 +8,7 @@ use reqwest_middleware::ClientWithMiddleware;
 use tokio::time;
 
 use super::{Encryption, Segment, Stopper, Stream};
-use crate::livestream::HashableByteRange;
+use crate::livestream::{HashableByteRange, MediaFormat};
 use crate::utils::make_absolute_url;
 
 /// Periodically fetch m3u8 media playlist and send new segments to download task
@@ -100,6 +100,7 @@ pub async fn m3u8_fetcher(
                             .map(|b| HashableByteRange::new(b.clone())),
                         discon_seq,
                         seq,
+                        format: MediaFormat::Unknown,
                     },
                     encryption.clone(),
                 ))
