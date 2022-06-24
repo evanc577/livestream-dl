@@ -20,8 +20,6 @@ pub async fn remux(
     output_dir: impl AsRef<Path>,
     remux_output: impl AsRef<Path>,
 ) -> Result<()> {
-    info!("Remuxing to mp4");
-
     // Map discon seq -> Vec<(stream, concatenated path)>
     let mut discons: HashMap<_, Vec<_>> = HashMap::new();
 
@@ -44,13 +42,21 @@ pub async fn remux(
                         // Add current segment to be processed
                         segments_to_process.push(path.as_path());
                     } else {
-                        // If discontinuity changed, concat all of its segments
-                        let file_path = gen_concat_path(stream, &output_dir, *d)?;
-                        concat_segments(&segments_to_process, &file_path).await?;
-                        discons.entry(d).or_default().push((stream, file_path));
+                        // If discontinuity changed, concat all previous discontinuity segments
+                        if !segments_to_process.is_empty() {
+                            let file_path =
+                                gen_concat_path(stream, &output_dir, *cur_discon_seq.unwrap())?;
+                            concat_segments(&segments_to_process, &file_path).await?;
+                            discons
+                                .entry(cur_discon_seq.unwrap())
+                                .or_default()
+                                .push((stream, file_path));
+                        }
 
-                        // Reset segments to process and update current discontinuity sequence
+                        // Reset segments to process, push current segment, and update current
+                        // discontinuity sequence
                         segments_to_process.clear();
+                        segments_to_process.push(path.as_path());
                         cur_discon_seq = Some(d);
                     }
                 }
@@ -203,7 +209,7 @@ async fn concat_segments(input_paths: &[impl AsRef<Path>], output: impl AsRef<Pa
 }
 
 async fn file_concat(input_paths: &[impl AsRef<Path>], output: impl AsRef<Path>) -> Result<()> {
-    info!("File concat to {:?}", output.as_ref());
+    info!("File concat to temporary file {:?}", output.as_ref());
 
     let mut file = fs::File::create(output.as_ref()).await?;
     for path in input_paths {
@@ -213,7 +219,7 @@ async fn file_concat(input_paths: &[impl AsRef<Path>], output: impl AsRef<Path>)
 }
 
 async fn ffmpeg_concat(input_paths: &[impl AsRef<Path>], output: impl AsRef<Path>) -> Result<()> {
-    info!("ffmpeg concat to {:?}", output.as_ref());
+    info!("ffmpeg concat to temporary file {:?}", output.as_ref());
 
     // Create concat text file
     let file = tempfile::NamedTempFile::new()?;
