@@ -75,7 +75,8 @@ enum Segment {
     Sequence {
         url: Url,
         byte_range: Option<ByteRange>,
-        n: u64,
+        discon_seq: u64,
+        seq: u64,
     },
 }
 
@@ -92,7 +93,11 @@ impl Segment {
     fn id(&self) -> String {
         match self {
             Self::Initialization { .. } => "init".into(),
-            Self::Sequence { n: i, .. } => format!("{:010}", i),
+            Self::Sequence {
+                discon_seq: d,
+                seq: s,
+                ..
+            } => format!("d{:010}s{:010}", d, s),
         }
     }
 
@@ -315,7 +320,7 @@ async fn m3u8_fetcher(
     stream: Stream,
     url: Url,
 ) -> Result<()> {
-    let mut last_seq = None;
+    let mut last_seg = None;
     let mut init_downloaded = false;
 
     loop {
@@ -329,16 +334,24 @@ async fn m3u8_fetcher(
             .1;
 
         // Loop through media segments
-        for (i, segment) in (media_playlist.media_sequence..).zip(media_playlist.segments.iter()) {
+        let mut discon_offset = 0;
+        for (seq, segment) in (media_playlist.media_sequence..).zip(media_playlist.segments.iter())
+        {
+            // Calculate segment discontinuity
+            if segment.discontinuity {
+                discon_offset += 1;
+            }
+            let discon_seq = media_playlist.discontinuity_sequence + discon_offset;
+
             // Skip segment if already downloaded
-            if let Some(s) = last_seq {
-                if s >= i {
+            if let Some(s) = last_seg {
+                if s >= (discon_seq, seq) {
                     continue;
                 }
             }
 
             // Segment is new
-            last_seq = Some(i);
+            last_seg = Some((discon_seq, seq));
             found_new_segments = true;
 
             // Download initialization if needed
@@ -373,7 +386,8 @@ async fn m3u8_fetcher(
                     Segment::Sequence {
                         url: seg_url,
                         byte_range: segment.byte_range.clone(),
-                        n: i,
+                        discon_seq,
+                        seq,
                     },
                 ))
                 .is_err()
