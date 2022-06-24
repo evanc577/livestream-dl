@@ -3,6 +3,7 @@ use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -282,6 +283,8 @@ impl Livestream {
     pub async fn download(&self, options: &DownloadOptions) -> Result<()> {
         // m3u8 reader task handles
         let mut handles = Vec::new();
+        // Check to fail fast if an m3u8 reader failed
+        let m3u8_reader_failed = Arc::new(AtomicBool::new(false));
 
         let rx = {
             // Create channel for m3u8 fetcher <-> segment downloader tasks
@@ -294,8 +297,16 @@ impl Livestream {
                 let tx = tx.clone();
                 let stream = stream.clone();
                 let url = url.clone();
+                let m3u8_reader_failed = m3u8_reader_failed.clone();
+                let no_fail_fast = options.no_fail_fast;
+
                 handles.push(tokio::spawn(async move {
-                    m3u8_fetcher(client, stopper, tx, stream, url).await
+                    let r = m3u8_fetcher(client, stopper.clone(), tx, stream, url).await;
+                    if r.is_err() && !no_fail_fast {
+                        stopper.stop().await;
+                        m3u8_reader_failed.store(true, Ordering::SeqCst);
+                    }
+                    r
                 }));
             }
 
@@ -317,6 +328,12 @@ impl Livestream {
             .map(|(stream, seg, encryption)| fetch_segment(&self.client, stream, seg, encryption))
             .buffered(self.network_options.max_concurrent_downloads);
         while let Some(x) = buffered.next().await {
+            // Quit immediately if an m3u8 reader failed
+            if self.stopper.stopped().await && m3u8_reader_failed.load(Ordering::SeqCst) {
+                break;
+            }
+
+            // Save the segment
             save_segment(
                 x?,
                 &mut init_map,

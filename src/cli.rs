@@ -31,6 +31,10 @@ pub struct DownloadOptions {
     /// Requires ffmpeg in $PATH.
     #[clap(long, value_parser, value_hint = clap::ValueHint::FilePath)]
     pub remux: Option<PathBuf>,
+
+    /// Don't exit immediately if an m3u8 fetcher task fails
+    #[clap(long, value_parser, default_value_t = false)]
+    pub no_fail_fast: bool,
 }
 
 #[derive(Parser, Clone, Debug)]
