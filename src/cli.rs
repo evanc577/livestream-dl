@@ -11,10 +11,6 @@ pub struct Args {
     #[clap(value_parser, value_hint = clap::ValueHint::Url)]
     pub m3u8_url: Url,
 
-    /// Log to file
-    #[clap(short, long, value_parser, value_hint = clap::ValueHint::FilePath)]
-    pub log_file: Option<PathBuf>,
-
     #[clap(flatten)]
     pub download_options: DownloadOptions,
 
@@ -25,17 +21,15 @@ pub struct Args {
 #[derive(Parser, Clone, Debug)]
 #[clap(help_heading = "DOWNLOAD OPTIONS")]
 pub struct DownloadOptions {
-    /// Output file (without extension)
-    #[clap(short, long, value_parser, value_hint = clap::ValueHint::FilePath)]
+    /// Output directory
+    #[clap(short, long, value_parser, value_hint = clap::ValueHint::DirPath)]
     pub output: PathBuf,
 
-    /// Save segments to this directory
-    #[clap(short, long, value_parser, value_hint = clap::ValueHint::DirPath)]
-    pub segments_directory: Option<PathBuf>,
-
-    /// Remux video file to mp4 (requires ffmpeg in $PATH)
-    #[clap(long, value_parser, default_value_t = false)]
-    pub remux: bool,
+    /// Remux streams to video mp4 file.
+    /// mp4 extension will be automatically added.
+    /// Requires ffmpeg in $PATH.
+    #[clap(long, value_parser, value_hint = clap::ValueHint::FilePath)]
+    pub remux: Option<PathBuf>,
 }
 
 #[derive(Parser, Clone, Debug)]

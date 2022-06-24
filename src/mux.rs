@@ -64,7 +64,8 @@ pub async fn remux(
     }
 
     // Set remaining ffmpeg args and run ffmpeg
-    cmd.arg("-c:v")
+    cmd.arg("-y")
+        .arg("-c:v")
         .arg("copy")
         .arg("-c:a")
         .arg("copy")

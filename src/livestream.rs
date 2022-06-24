@@ -258,9 +258,8 @@ impl Livestream {
         };
 
         // Create segments directory if needed
-        if let Some(ref p) = options.segments_directory {
-            fs::create_dir_all(&p).await?;
-        }
+        let segments_directory = options.output.join("segments");
+        fs::create_dir_all(&segments_directory).await?;
 
         // Generate output file names
         let mut output_files = HashMap::new();
@@ -277,14 +276,7 @@ impl Livestream {
         // Download segments
         //let mut file = fs::File::create(&output_temp).await?;
         let mut buffered = rx
-            .map(|(stream, seg)| {
-                fetch_segment(
-                    &self.client,
-                    stream,
-                    seg,
-                    options.segments_directory.as_ref(),
-                )
-            })
+            .map(|(stream, seg)| fetch_segment(&self.client, stream, seg, &segments_directory))
             .buffered(self.network_options.max_concurrent_downloads);
         while let Some(x) = buffered.next().await {
             let (stream, bytes) = x?;
@@ -296,9 +288,9 @@ impl Livestream {
                 .await?;
         }
 
-        if options.remux {
+        if let Some(remux_path) = &options.remux {
             // Remux if necessary
-            remux(output_file_paths, &options.output).await?;
+            remux(output_file_paths, remux_path).await?;
         } else {
             // Rename output files
             for (stream, path) in &output_file_paths {
@@ -427,7 +419,7 @@ async fn fetch_segment(
     client: &ClientWithMiddleware,
     stream: Stream,
     segment: Segment,
-    segment_path: Option<impl AsRef<Path>>,
+    segment_path: impl AsRef<Path>,
 ) -> Result<(Stream, Vec<u8>)> {
     let mut header_map = HeaderMap::new();
     let byte_range = segment.byte_range();
@@ -446,22 +438,20 @@ async fn fetch_segment(
         .into_iter()
         .collect();
 
-    // Save segment to disk if needed
-    if let Some(p) = segment_path {
-        let filename = p.as_ref().join(format!(
-            "segment_{}_{}.{}",
-            stream,
-            segment.id(),
-            stream.extension()
-        ));
-        trace!(
-            "Saving {} to {}",
-            segment.url().as_str(),
-            &filename.to_string_lossy()
-        );
-        let mut file = fs::File::create(&filename).await?;
-        file.write_all(&bytes).await?;
-    }
+    // Save segment to disk
+    let filename = segment_path.as_ref().join(format!(
+        "segment_{}_{}.{}",
+        stream,
+        segment.id(),
+        stream.extension()
+    ));
+    trace!(
+        "Saving {} to {}",
+        segment.url().as_str(),
+        &filename.to_string_lossy()
+    );
+    let mut file = fs::File::create(&filename).await?;
+    file.write_all(&bytes).await?;
 
     info!(
         "Downloaded {} {}",
