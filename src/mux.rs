@@ -43,8 +43,12 @@ pub async fn remux<P: AsRef<Path>>(
                     } else {
                         // If discontinuity changed, concat all previous discontinuity segments
                         if !segments_to_process.is_empty() {
-                            let file_path =
-                                gen_concat_path(stream, &output_dir, *cur_discon_seq.unwrap())?;
+                            let file_path = gen_concat_path(
+                                stream,
+                                segments_to_process[0].0,
+                                &output_dir,
+                                *cur_discon_seq.unwrap(),
+                            )?;
                             concat_segments(segments_to_process.as_slice(), &file_path).await?;
                             discons
                                 .entry(cur_discon_seq.unwrap())
@@ -65,7 +69,7 @@ pub async fn remux<P: AsRef<Path>>(
         // Concat last discontinuity
         if !segments_to_process.is_empty() {
             let d = cur_discon_seq.unwrap();
-            let file_path = gen_concat_path(stream, &output_dir, *d)?;
+            let file_path = gen_concat_path(stream, segments_to_process[0].0, &output_dir, *d)?;
             concat_segments(segments_to_process.as_slice(), &file_path).await?;
             discons.entry(d).or_default().push((stream, file_path));
         }
@@ -190,10 +194,19 @@ pub async fn remux<P: AsRef<Path>>(
     Ok(())
 }
 
-fn gen_concat_path(stream: &Stream, output_dir: impl AsRef<Path>, d: u64) -> Result<PathBuf> {
-    let ext = match stream {
-        Stream::Subtitle { .. } => "vtt",
-        _ => "ts",
+fn gen_concat_path(
+    stream: &Stream,
+    segment: &Segment,
+    output_dir: impl AsRef<Path>,
+    d: u64,
+) -> Result<PathBuf> {
+    let ext = match segment {
+        Segment::Initialization { .. } => {
+            return Err(anyhow::anyhow!(
+                "gen_concat_path got initialization expected sequence"
+            ))
+        }
+        Segment::Sequence { format, .. } => format.extension(),
     };
     let file_name = format!("{}_{:010}.{}", stream, d, ext);
     let file_path = output_dir.as_ref().join(file_name);

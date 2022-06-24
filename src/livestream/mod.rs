@@ -274,30 +274,33 @@ async fn fetch_segment(
 }
 
 async fn save_segment(
-    (stream, segment, mut bytes): SegmentIdData,
+    (stream, mut segment, mut bytes): SegmentIdData,
     init_map: &mut HashMap<Stream, Vec<u8>>,
     downloaded_segments: &mut HashMap<Stream, Vec<(Segment, PathBuf)>>,
     segments_directory: impl AsRef<Path>,
 ) -> Result<()> {
-    match &segment {
+    // Get ID here before mutably borrowing segment's fields
+    let id = segment.id();
+
+    match segment {
         Segment::Initialization { .. } => {
             // If segment is initialization, save data for later use
-            init_map.insert(stream.clone(), bytes);
+            init_map.insert(stream, bytes);
         }
-        Segment::Sequence { .. } => {
+        Segment::Sequence { ref mut format, .. } => {
             // If initialization exists, prepend it first
             if let Some(init) = init_map.get(&stream) {
                 bytes = init.iter().chain(bytes.iter()).copied().collect();
             }
 
-            trace!("Trying to detect format for segment: {:?}", segment);
-            let format = MediaFormat::detect(bytes.clone()).await?;
+            // Detect segment format
+            *format = MediaFormat::detect(bytes.clone()).await?;
 
             // Save segment to disk
             let file_path = segments_directory.as_ref().join(format!(
                 "segment_{}_{}.{}",
                 stream,
-                segment.id(),
+                id,
                 format.extension()
             ));
             trace!("saving to {:?}", &file_path);
