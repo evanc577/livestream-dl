@@ -15,10 +15,10 @@ use tokio::{fs, process};
 use crate::livestream::{Segment, Stream};
 
 /// Remux media files into a single mp4 file with ffmpeg
-pub async fn remux(
+pub async fn remux<P: AsRef<Path>>(
     downloaded_paths: HashMap<Stream, Vec<(Segment, PathBuf)>>,
-    output_dir: impl AsRef<Path>,
-    remux_output: impl AsRef<Path>,
+    output_dir: P,
+    remux_output: P,
 ) -> Result<()> {
     // Map discon seq -> Vec<(stream, concatenated path)>
     let mut discons: HashMap<_, Vec<_>> = HashMap::new();
@@ -200,7 +200,7 @@ fn gen_concat_path(stream: &Stream, output_dir: impl AsRef<Path>, d: u64) -> Res
     Ok(file_path)
 }
 
-async fn concat_segments(input_paths: &[impl AsRef<Path>], output: impl AsRef<Path>) -> Result<()> {
+async fn concat_segments<P: AsRef<Path>>(input_paths: &[P], output: P) -> Result<()> {
     if should_use_ffmpeg_concat(input_paths[0].as_ref()).await? {
         ffmpeg_concat(input_paths, output).await
     } else {
@@ -208,7 +208,7 @@ async fn concat_segments(input_paths: &[impl AsRef<Path>], output: impl AsRef<Pa
     }
 }
 
-async fn file_concat(input_paths: &[impl AsRef<Path>], output: impl AsRef<Path>) -> Result<()> {
+async fn file_concat<P: AsRef<Path>>(input_paths: &[P], output: P) -> Result<()> {
     info!("File concat to temporary file {:?}", output.as_ref());
 
     let mut file = fs::File::create(output.as_ref()).await?;
@@ -218,8 +218,8 @@ async fn file_concat(input_paths: &[impl AsRef<Path>], output: impl AsRef<Path>)
     Ok(())
 }
 
-async fn ffmpeg_concat(input_paths: &[impl AsRef<Path>], output: impl AsRef<Path>) -> Result<()> {
-    info!("ffmpeg concat to temporary file {:?}", output.as_ref());
+async fn ffmpeg_concat<P: AsRef<Path>>(input_paths: &[P], output: P) -> Result<()> {
+    info!("ffmpeg concat demux to temporary file {:?}", output.as_ref());
 
     // Create concat text file
     let file = tempfile::NamedTempFile::new()?;
