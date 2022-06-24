@@ -330,6 +330,7 @@ impl Livestream {
 
         if let Some(remux_path) = &options.remux {
             // Remux if necessary
+            let remux_path = options.output.join(remux_path);
             remux(downloaded_segments, &options.output, remux_path).await?;
         } else {
             // Rename output files

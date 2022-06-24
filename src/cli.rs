@@ -25,7 +25,8 @@ pub struct DownloadOptions {
     #[clap(short, long, value_parser, value_hint = clap::ValueHint::DirPath)]
     pub output: PathBuf,
 
-    /// Remux streams to video mp4 file.
+    /// Remux streams to mp4 file with this name.
+    /// Video file will be placed relative to --output directory.
     /// mp4 extension will be automatically added.
     /// Requires ffmpeg in $PATH.
     #[clap(long, value_parser, value_hint = clap::ValueHint::FilePath)]
