@@ -294,20 +294,6 @@ impl Livestream {
         let segments_directory = options.output.join("segments");
         fs::create_dir_all(&segments_directory).await?;
 
-        // Generate output file names
-        /*
-        let mut output_files = HashMap::new();
-        let mut output_file_paths = HashMap::new();
-        for stream in self.streams.keys() {
-            let mut filename = options.output.file_name().unwrap().to_owned();
-            filename.push(format!("_{}.part", stream));
-            let path = options.output.parent().unwrap().join(filename);
-            let file = fs::File::create(&path).await?;
-            output_files.insert(stream.clone(), file);
-            output_file_paths.insert(stream.clone(), path);
-        }
-        */
-
         // Save initializations for each stream
         let mut init_map = HashMap::new();
 
@@ -332,11 +318,6 @@ impl Livestream {
             // Remux if necessary
             let remux_path = options.output.join(remux_path);
             remux(downloaded_segments, &options.output, remux_path).await?;
-        } else {
-            // Rename output files
-            //for (stream, path) in &output_file_paths {
-            //fs::rename(&path, path.with_extension(stream.extension())).await?;
-            //}
         }
 
         // Check join handles
@@ -546,13 +527,5 @@ async fn save_segment(
             .push((segment, file_path));
     }
 
-    /*
-    // Append segment to output file
-    output_files
-        .get_mut(&stream)
-        .unwrap()
-        .write_all(&bytes)
-        .await?;
-        */
     Ok(())
 }

@@ -41,7 +41,13 @@ pub struct NetworkOptions {
     pub max_retries: u32,
 
     /// Network requests timeout in seconds
-    #[clap(short, long, value_parser, value_name = "SECONDS", default_value_t = 30)]
+    #[clap(
+        short,
+        long,
+        value_parser,
+        value_name = "SECONDS",
+        default_value_t = 30
+    )]
     pub timeout: u64,
 
     /// Maximum number of concurrent downloads

@@ -2,8 +2,8 @@ mod cli;
 mod livestream;
 mod mux;
 
-use std::path::Path;
 use std::io;
+use std::path::Path;
 
 use anyhow::Result;
 use clap::Parser;
@@ -48,7 +48,10 @@ async fn main() -> Result<()> {
 
 async fn create_output_dir(output_dir: impl AsRef<Path>) -> Result<()> {
     if output_dir.as_ref().is_dir() {
-        eprintln!("Using existing output directory {:?}. This may overwrite any existing files.", output_dir.as_ref());
+        eprintln!(
+            "Using existing output directory {:?}. This may overwrite any existing files.",
+            output_dir.as_ref()
+        );
         eprint!("Is ths OK? [Y/n] ");
         let mut response = String::new();
         let stdin = io::stdin(); // We get `Stdin` here.
