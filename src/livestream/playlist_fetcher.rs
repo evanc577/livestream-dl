@@ -2,16 +2,17 @@ use std::time::Duration;
 
 use anyhow::Result;
 use futures::channel::mpsc;
-use log::trace;
 use reqwest::Url;
 use reqwest_middleware::ClientWithMiddleware;
 use tokio::time;
+use tracing::{event, Level, instrument};
 
 use super::{Encryption, Segment, Stopper, Stream};
 use crate::livestream::{HashableByteRange, MediaFormat};
 use crate::utils::make_absolute_url;
 
 /// Periodically fetch m3u8 media playlist and send new segments to download task
+#[instrument(skip(client, notify_stop, tx))]
 pub async fn m3u8_fetcher(
     client: ClientWithMiddleware,
     notify_stop: Stopper,
@@ -26,7 +27,7 @@ pub async fn m3u8_fetcher(
         // Fetch playlist
         let now = time::Instant::now();
         let mut found_new_segments = false;
-        trace!("Fetching {}", url.as_str());
+        event!(Level::TRACE, "Fetching {}", url.as_str());
         let bytes = client.get(url.clone()).send().await?.bytes().await?;
         let media_playlist = m3u8_rs::parse_media_playlist(&bytes)
             .map_err(|e| anyhow::anyhow!("{:?}", e))?
@@ -63,7 +64,7 @@ pub async fn m3u8_fetcher(
             if !init_downloaded {
                 if let Some(map) = &segment.map {
                     let init_url = make_absolute_url(&url, &map.uri)?;
-                    trace!("Found new initialization segment {}", init_url.as_str());
+                    event!(Level::TRACE, "Found new initialization segment {}", init_url.as_str());
                     if tx
                         .unbounded_send((
                             stream.clone(),
@@ -88,7 +89,7 @@ pub async fn m3u8_fetcher(
             let seg_url = make_absolute_url(&url, &segment.uri)?;
 
             // Download segment
-            trace!("Found new segment {}", seg_url.as_str());
+            event!(Level::TRACE, "Found new segment {}", seg_url.as_str());
             if tx
                 .unbounded_send((
                     stream.clone(),
@@ -112,7 +113,7 @@ pub async fn m3u8_fetcher(
 
         // Return if stream ended
         if media_playlist.end_list {
-            trace!("Playlist ended");
+            event!(Level::TRACE, "Playlist ended");
             return Ok(());
         }
 

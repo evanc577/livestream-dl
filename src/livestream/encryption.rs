@@ -1,10 +1,10 @@
 use aes::cipher::block_padding::Pkcs7;
 use aes::cipher::{BlockDecryptMut, KeyIvInit};
 use anyhow::Result;
-use log::trace;
 use m3u8_rs::Key;
 use reqwest::Url;
 use reqwest_middleware::ClientWithMiddleware;
+use tracing::{event, Level, instrument};
 
 use crate::utils::make_absolute_url;
 
@@ -22,6 +22,7 @@ pub enum Encryption {
 impl Encryption {
     /// Check m3u8_key and return encryption.
     /// If encrypted, will make a query to the designated url to fetch the key
+    #[instrument(skip(client))]
     pub async fn new(
         client: &ClientWithMiddleware,
         m3u8_key: &Key,
@@ -41,7 +42,7 @@ impl Encryption {
 
                     // Fetch key
                     let uri = make_absolute_url(base_url, uri)?;
-                    trace!("Fetching encryption key from {}", uri.as_str());
+                    event!(Level::TRACE, "Fetching encryption key from {}", uri.as_str());
                     let body = client.get(uri).send().await?.bytes().await?;
                     let mut key = [0_u8; 16];
                     key.copy_from_slice(&body[..16]);
@@ -78,11 +79,12 @@ impl Encryption {
     }
 
     /// Decrypt the given data
+    #[instrument(skip(data))]
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
         let r = match self {
             Self::None => Vec::from(data),
             Self::Aes128 { key, iv } => {
-                trace!("Decrypting segment");
+                event!(Level::TRACE, "Decrypting segment");
                 Aes128CbcDec::new(key.into(), iv.into()).decrypt_padded_vec_mut::<Pkcs7>(data)?
             }
             Self::SampleAes => unimplemented!(),

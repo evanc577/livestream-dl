@@ -3,29 +3,35 @@ mod livestream;
 mod mux;
 mod utils;
 
-use std::io;
 use std::path::Path;
 
 use anyhow::Result;
 use clap::Parser;
-use fern::colors::{Color, ColoredLevelConfig};
 use livestream::Livestream;
-use log::{info, LevelFilter, error};
-use tokio::fs;
+use tracing::{event, Level};
+use tracing_subscriber::filter::{FilterExt, LevelFilter};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::{EnvFilter, Layer};
 
-fn main() {
-    if let Err(e) = run() {
-        error!("{}", e);
+fn main() -> Result<()> {
+    // Parse CLI args
+    let args = cli::Args::parse();
+
+    // Init logging
+    create_output_dir(&args.download_options.output)?;
+    init_tracing(&args.download_options.output)?;
+
+    // Run main program
+    if let Err(e) = run(args) {
+        event!(Level::ERROR, "{}", e);
         std::process::exit(1);
     }
+
+    Ok(())
 }
 
 #[tokio::main]
-async fn run() -> Result<()> {
-    let args = cli::Args::parse();
-    create_output_dir(&args.download_options.output).await?;
-    setup_logger(&args.download_options.output)?;
-
+async fn run(args: cli::Args) -> Result<()> {
     let (livestream, stopper) = Livestream::new(&args.m3u8_url, &args.network_options).await?;
 
     // Gracefully exit on ctrl-c
@@ -43,7 +49,7 @@ async fn run() -> Result<()> {
 
         tokio::spawn(async move {
             stream.recv().await;
-            info!("Stopping download");
+            event!(Level::INFO, "Stopping download");
             stopper.stop().await;
         });
     }
@@ -54,7 +60,7 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
-async fn create_output_dir(output_dir: impl AsRef<Path>) -> Result<()> {
+fn create_output_dir(output_dir: impl AsRef<Path>) -> Result<()> {
     if output_dir.as_ref().is_dir() {
         eprintln!(
             "Found existing output directory {:?}, existing files may be overwritten.",
@@ -62,49 +68,34 @@ async fn create_output_dir(output_dir: impl AsRef<Path>) -> Result<()> {
         );
         eprint!("Is ths OK? [y/N] ");
         let mut response = String::new();
-        io::stdin().read_line(&mut response)?;
+        std::io::stdin().read_line(&mut response)?;
         if response.trim().to_lowercase() != "y" {
             return Err(anyhow::anyhow!("Not downloading into existing directory"));
         }
     }
-    fs::create_dir_all(output_dir).await?;
+    std::fs::create_dir_all(output_dir)?;
     Ok(())
 }
 
-fn setup_logger(output_dir: impl AsRef<Path>) -> Result<()> {
-    // Set up colors
-    let colors = ColoredLevelConfig::new().info(Color::Green);
+fn init_tracing(output_dir: impl AsRef<Path>) -> Result<()> {
+    // Log DEBUG to file unless overridden
+    let file = std::fs::File::create(output_dir.as_ref().join("log.txt"))?;
+    let file_log = tracing_subscriber::fmt::layer()
+        .json()
+        .with_writer(file)
+        .with_filter(EnvFilter::from_env("LIVESTREAM_DL_LOG").or(LevelFilter::DEBUG));
 
     // Log INFO to stdout
-    let stdout_dispatch = fern::Dispatch::new()
-        .format(move |out, message, record| {
-            out.finish(format_args!(
-                "[{}] {}",
-                colors.color(record.level()),
-                message
-            ))
-        })
-        .level(LevelFilter::Info)
-        .chain(std::io::stdout());
+    let stdout_log = tracing_subscriber::fmt::layer()
+        .compact()
+        .without_time()
+        .with_filter(LevelFilter::INFO);
 
-    // Log TRACE to file
-    let file_dispatch = fern::Dispatch::new()
-        .format(move |out, message, record| {
-            out.finish(format_args!(
-                "[{}][{}] {}",
-                record.target(),
-                record.level(),
-                message
-            ))
-        })
-        .level(LevelFilter::Trace)
-        .chain(fern::log_file(output_dir.as_ref().join("log.txt"))?);
-
-    // Apply logger
-    fern::Dispatch::new()
-        .chain(stdout_dispatch)
-        .chain(file_dispatch)
-        .apply()?;
+    // Start loggging
+    let subscriber = tracing_subscriber::Registry::default()
+        .with(stdout_log)
+        .with(file_log);
+    tracing::subscriber::set_global_default(subscriber)?;
 
     Ok(())
 }

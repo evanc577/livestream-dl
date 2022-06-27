@@ -1,20 +1,22 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env;
+use std::fmt::Debug;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use isolang::Language;
-use log::{info, trace};
 use oxilangtag::LanguageTag;
 use tokio::io::AsyncWriteExt;
 use tokio::{fs, process};
+use tracing::{event, instrument, Level};
 
 use crate::livestream::{MediaFormat, Segment, Stream};
 
 /// Remux media files into a single mp4 file with ffmpeg
-pub async fn remux<P: AsRef<Path>>(
+#[instrument(level = "trace")]
+pub async fn remux<P: AsRef<Path> + Debug>(
     downloaded_paths: HashMap<Stream, Vec<(Segment, PathBuf)>>,
     output_dir: P,
     remux_output: P,
@@ -145,7 +147,7 @@ pub async fn remux<P: AsRef<Path>>(
         }
         .with_extension("mp4");
 
-        info!("ffmpeg mux to {:?}", &output_path);
+        event!(Level::INFO, "ffmpeg mux to {:?}", &output_path);
 
         // Set remaining ffmpeg args and run ffmpeg
         cmd.arg("-muxpreload")
@@ -166,13 +168,15 @@ pub async fn remux<P: AsRef<Path>>(
             .arg(output_path)
             .kill_on_drop(true);
 
-        trace!("{:?}", cmd);
+        event!(Level::TRACE, "{:?}", cmd);
         let output = cmd.output().await?;
-        trace!(
+        event!(
+            Level::TRACE,
             "ffmpeg stdout: {:#?}",
             String::from_utf8_lossy(&output.stdout)
         );
-        trace!(
+        event!(
+            Level::TRACE,
             "ffmpeg stderr: {:#?}",
             String::from_utf8_lossy(&output.stderr)
         );
@@ -186,7 +190,7 @@ pub async fn remux<P: AsRef<Path>>(
     // Delete original files
     for concatted_streams in discons.values() {
         for (_, path) in concatted_streams {
-            trace!("Removing {}", path.to_string_lossy());
+            event!(Level::TRACE, "Removing {}", path.to_string_lossy());
             fs::remove_file(path).await?;
         }
     }
@@ -194,10 +198,11 @@ pub async fn remux<P: AsRef<Path>>(
     Ok(())
 }
 
+#[instrument(level = "trace")]
 fn gen_concat_path(
     stream: &Stream,
     segment: &Segment,
-    output_dir: impl AsRef<Path>,
+    output_dir: impl AsRef<Path> + Debug,
     d: u64,
 ) -> Result<PathBuf> {
     let ext = match segment {
@@ -213,7 +218,11 @@ fn gen_concat_path(
     Ok(file_path)
 }
 
-async fn concat_segments<P: AsRef<Path>>(inputs: &[(&Segment, P)], output: P) -> Result<()> {
+#[instrument(level = "trace")]
+async fn concat_segments<P: AsRef<Path> + Debug>(
+    inputs: &[(&Segment, P)],
+    output: P,
+) -> Result<()> {
     if should_use_ffmpeg_concat(inputs[0].0).await? {
         ffmpeg_concat(inputs.iter().map(|(_, p)| p), &output).await
     } else {
@@ -221,11 +230,16 @@ async fn concat_segments<P: AsRef<Path>>(inputs: &[(&Segment, P)], output: P) ->
     }
 }
 
-async fn file_concat<P: AsRef<Path>>(
+#[instrument(level = "trace", skip(input_paths))]
+async fn file_concat<P: AsRef<Path> + Debug>(
     input_paths: impl IntoIterator<Item = P>,
     output: P,
 ) -> Result<()> {
-    info!("File concat to temporary file {:?}", output.as_ref());
+    event!(
+        Level::INFO,
+        "File concat to temporary file {:?}",
+        output.as_ref()
+    );
 
     let mut file = fs::File::create(output.as_ref()).await?;
     for path in input_paths {
@@ -234,11 +248,13 @@ async fn file_concat<P: AsRef<Path>>(
     Ok(())
 }
 
-async fn ffmpeg_concat<P: AsRef<Path>>(
+#[instrument(level = "trace", skip(input_paths))]
+async fn ffmpeg_concat<P: AsRef<Path> + Debug>(
     input_paths: impl IntoIterator<Item = P>,
     output: P,
 ) -> Result<()> {
-    info!(
+    event!(
+        Level::INFO,
         "ffmpeg concat demux to temporary file {:?}",
         output.as_ref()
     );
@@ -275,13 +291,15 @@ async fn ffmpeg_concat<P: AsRef<Path>>(
         .arg(output.as_ref())
         .kill_on_drop(true);
 
-    trace!("{:?}", cmd);
+    event!(Level::TRACE, "{:?}", cmd);
     let output = cmd.output().await?;
-    trace!(
+    event!(
+        Level::TRACE,
         "ffmpeg stdout: {:#?}",
         String::from_utf8_lossy(&output.stdout)
     );
-    trace!(
+    event!(
+        Level::TRACE,
         "ffmpeg stderr: {:#?}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -295,6 +313,7 @@ async fn ffmpeg_concat<P: AsRef<Path>>(
 }
 
 /// Decide whether to use file or ffmpeg concat demuxer
+#[instrument(level = "trace")]
 async fn should_use_ffmpeg_concat(segment: &Segment) -> Result<bool> {
     let use_ffmpeg = match segment {
         Segment::Initialization { .. } => false,
@@ -312,7 +331,8 @@ async fn should_use_ffmpeg_concat(segment: &Segment) -> Result<bool> {
 }
 
 /// Convert rfc5646 language tag to iso639-3 format readable by ffmpeg
-fn to_iso639_2(lang: impl AsRef<str>) -> Result<String> {
+#[instrument(level = "trace")]
+fn to_iso639_2(lang: impl AsRef<str> + Debug) -> Result<String> {
     // Parse language tag string
     let tag = LanguageTag::parse(lang.as_ref())?;
     let mut code = tag.primary_language().to_owned();

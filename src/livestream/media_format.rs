@@ -1,10 +1,10 @@
 use std::process::Stdio;
 
 use anyhow::Result;
-use log::trace;
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tokio::process;
+use tracing::{event, Level, instrument};
 
 #[non_exhaustive]
 #[allow(dead_code)]
@@ -29,6 +29,7 @@ pub enum MediaFormat {
 }
 
 impl MediaFormat {
+    #[instrument(skip(data))]
     pub async fn detect(data: Vec<u8>) -> Result<Self> {
         #[derive(Deserialize)]
         struct FFProbeOuput {
@@ -51,7 +52,7 @@ impl MediaFormat {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .kill_on_drop(true);
-        trace!("{:?}", cmd);
+        event!(Level::TRACE, "{:?}", cmd);
         let mut child = cmd.spawn()?;
 
         let mut stdin = child
@@ -70,7 +71,7 @@ impl MediaFormat {
 
         // Check ffprobe exit status
         if !output.status.success() {
-            trace!("ffprobe detect format failed, output: {:?}", utf8_output);
+            event!(Level::TRACE, "ffprobe detect format failed, output: {:?}", utf8_output);
             return Ok(Self::Unknown);
         }
 
@@ -78,7 +79,7 @@ impl MediaFormat {
         let parsed: Result<FFProbeOuput, _> = serde_json::from_str(&utf8_output);
         match parsed {
             Err(e) => {
-                trace!("Unable to parse ffprobe output: {:?}, {:?}", utf8_output, e);
+                event!(Level::TRACE, "Unable to parse ffprobe output: {:?}, {:?}", utf8_output, e);
                 Ok(Self::Unknown)
             }
             Ok(o) => {
@@ -95,6 +96,7 @@ impl MediaFormat {
         }
     }
 
+    #[instrument]
     pub fn extension(&self) -> String {
         match self {
             Self::MpegTs => "ts",

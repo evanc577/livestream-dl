@@ -7,7 +7,7 @@ mod stopper;
 mod stream;
 
 use std::collections::HashMap;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -16,7 +16,6 @@ use std::time::Duration;
 use anyhow::Result;
 use futures::channel::mpsc;
 use futures::StreamExt;
-use log::{info, trace};
 use m3u8_rs::Playlist;
 use reqwest::header::{self, HeaderMap};
 use reqwest::{Client, Url};
@@ -24,6 +23,7 @@ use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies, RetryTransientMiddleware};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+use tracing::{event, instrument, Level};
 
 pub use self::encryption::Encryption;
 pub use self::hashable_byte_range::HashableByteRange;
@@ -74,6 +74,7 @@ impl Livestream {
     ///
     /// If a master playlist is given, choose the highest bitrate variant and download its stream
     /// and all of its alternative media streams
+    #[instrument(level = "trace")]
     pub async fn new(url: &Url, network_options: &NetworkOptions) -> Result<(Self, Stopper)> {
         // Create reqwest client
         let client = Client::builder()
@@ -159,6 +160,7 @@ impl Livestream {
     }
 
     /// Download the livestream to disk
+    #[instrument(level = "trace")]
     pub async fn download(&self, options: &DownloadOptions) -> Result<()> {
         // m3u8 reader task handles
         let mut handles = Vec::new();
@@ -238,6 +240,7 @@ impl Livestream {
 }
 
 /// Download segment and save to disk if necessary
+#[instrument(level = "trace")]
 async fn fetch_segment(
     client: &ClientWithMiddleware,
     stream: Stream,
@@ -264,7 +267,8 @@ async fn fetch_segment(
     // Decrypt
     let bytes = encryption.decrypt(&bytes)?;
 
-    info!(
+    event!(
+        Level::INFO,
         "Downloaded {} {}",
         segment.url().as_str(),
         byte_range.unwrap_or_else(|| "".into())
@@ -273,12 +277,16 @@ async fn fetch_segment(
     Ok((stream, segment, bytes))
 }
 
-async fn save_segment(
+#[instrument(level = "trace", skip(bytes, init_map))]
+async fn save_segment<P>(
     (stream, mut segment, mut bytes): SegmentIdData,
     init_map: &mut HashMap<Stream, Vec<u8>>,
     downloaded_segments: &mut HashMap<Stream, Vec<(Segment, PathBuf)>>,
-    segments_directory: impl AsRef<Path>,
-) -> Result<()> {
+    segments_directory: P,
+) -> Result<()>
+where
+    P: AsRef<Path> + Debug,
+{
     // Get ID here before mutably borrowing segment's fields
     let id = segment.id();
 
@@ -303,7 +311,7 @@ async fn save_segment(
                 id,
                 format.extension()
             ));
-            trace!("saving to {:?}", &file_path);
+            event!(Level::TRACE, "saving to {:?}", &file_path);
             let mut file = fs::File::create(&file_path).await?;
             file.write_all(&bytes).await?;
 
