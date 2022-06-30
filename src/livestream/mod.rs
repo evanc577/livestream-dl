@@ -215,13 +215,20 @@ impl Livestream {
             }
 
             // Save the segment
-            save_segment(
-                x?,
+            let id_data = x?;
+            let segment = id_data.1.clone();
+            let res = save_segment(
+                id_data,
                 &mut init_map,
                 &mut downloaded_segments,
                 &segments_directory,
             )
-            .await?;
+            .await;
+
+            // Log warning if segment failed to download
+            if let Err(e) = res {
+                event!(Level::WARN, "Failed to download {}, reason: {}", segment.url(), e);
+            }
         }
 
         if let Some(remux_path) = &options.remux {
