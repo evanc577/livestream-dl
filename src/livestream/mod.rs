@@ -227,14 +227,18 @@ impl Livestream {
 
             // Log warning if segment failed to download
             if let Err(e) = res {
-                event!(Level::WARN, "Failed to download {}, reason: {}", segment.url(), e);
+                event!(
+                    Level::WARN,
+                    "Failed to download {}, reason: {}",
+                    segment.url(),
+                    e
+                );
             }
         }
 
-        if let Some(remux_path) = &options.remux {
-            // Remux if necessary
-            let remux_path = options.output.join(remux_path);
-            remux(downloaded_segments, &options.output, &remux_path).await?;
+        // Remux if necessary
+        if !options.no_remux {
+            remux(downloaded_segments, &options.output).await?;
         }
 
         // Check join handles

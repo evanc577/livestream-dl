@@ -19,7 +19,6 @@ use crate::livestream::{MediaFormat, Segment, Stream};
 pub async fn remux<P: AsRef<Path> + Debug>(
     downloaded_paths: HashMap<Stream, Vec<(Segment, PathBuf)>>,
     output_dir: P,
-    remux_output: P,
 ) -> Result<()> {
     // Map discon seq -> Vec<(stream, concatenated path)>
     let mut discons: HashMap<_, Vec<_>> = HashMap::new();
@@ -134,16 +133,15 @@ pub async fn remux<P: AsRef<Path> + Debug>(
             }
         }
 
+        // Generate output name
+        const FILE_NAME: &str = "video";
         let output_path = if discons.len() == 1 {
-            remux_output.as_ref().to_owned()
+            output_dir.as_ref().join(FILE_NAME)
         } else {
-            let mut file_name = remux_output
-                .as_ref()
-                .file_name()
-                .ok_or_else(|| anyhow::anyhow!("Not a file: {:?}", remux_output.as_ref()))?
-                .to_owned();
-            file_name.push(format!("_{:010}", discon_seq));
-            remux_output.as_ref().parent().unwrap().join(file_name)
+            FILE_NAME
+                .to_string()
+                .push_str(&format!("_{:010}", discon_seq));
+            output_dir.as_ref().parent().unwrap().join(FILE_NAME)
         }
         .with_extension("mp4");
 

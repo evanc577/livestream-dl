@@ -25,12 +25,9 @@ pub struct DownloadOptions {
     #[clap(short, long, value_parser, value_hint = clap::ValueHint::DirPath)]
     pub output: PathBuf,
 
-    /// Remux streams to mp4 file with this name.
-    /// Video file will be placed relative to --output directory.
-    /// mp4 extension will be automatically added.
-    /// Requires ffmpeg in $PATH.
-    #[clap(long, value_parser, value_hint = clap::ValueHint::FilePath)]
-    pub remux: Option<PathBuf>,
+    /// Don't remux streams to mp4
+    #[clap(long, value_parser)]
+    pub no_remux: bool,
 
     /// Don't exit immediately if an m3u8 fetcher task fails
     #[clap(long, value_parser, default_value_t = false)]
