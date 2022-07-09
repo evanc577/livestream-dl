@@ -78,6 +78,10 @@ fn create_output_dir(output_dir: impl AsRef<Path>) -> Result<()> {
 }
 
 fn init_tracing(output_dir: impl AsRef<Path>) -> Result<()> {
+    // Enable ANSI support on Windows for colors
+    #[cfg(target_os = "windows")]
+    let _ = ansi_term::enable_ansi_support();
+
     // Log DEBUG to file unless overridden
     let file = std::fs::File::create(output_dir.as_ref().join("log.txt"))?;
     let file_log = tracing_subscriber::fmt::layer()

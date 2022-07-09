@@ -547,6 +547,7 @@ name = "livestream-dl"
 version = "0.4.0"
 dependencies = [
  "aes",
+ "ansi_term",
  "anyhow",
  "cbc",
  "clap",
