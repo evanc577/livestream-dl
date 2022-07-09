@@ -36,12 +36,12 @@ async fn run(args: cli::Args) -> Result<()> {
 
     // Gracefully exit on ctrl-c
     {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(target_family = "unix")]
         let mut stream = {
             use tokio::signal::unix::{signal, SignalKind};
             signal(SignalKind::interrupt()).unwrap()
         };
-        #[cfg(target_os = "windows")]
+        #[cfg(target_family = "windows")]
         let mut stream = {
             use tokio::signal::windows::ctrl_c;
             ctrl_c().unwrap()
@@ -79,7 +79,7 @@ fn create_output_dir(output_dir: impl AsRef<Path>) -> Result<()> {
 
 fn init_tracing(output_dir: impl AsRef<Path>) -> Result<()> {
     // Enable ANSI support on Windows for colors
-    #[cfg(target_os = "windows")]
+    #[cfg(target_family = "windows")]
     let _ = ansi_term::enable_ansi_support();
 
     // Log DEBUG to file unless overridden
