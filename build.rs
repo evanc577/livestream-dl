@@ -22,8 +22,7 @@ fn main() -> Result<(), Error> {
     ];
 
     for shell in shells {
-        let path = generate_to(shell, &mut cmd, "livestream-dl", &outdir)?;
-        println!("cargo:warning=completion file is generated: {:?}", path);
+        generate_to(shell, &mut cmd, "livestream-dl", &outdir)?;
     }
 
     Ok(())
