@@ -316,11 +316,7 @@ async fn should_use_ffmpeg_concat(segment: &Segment) -> Result<bool> {
     let use_ffmpeg = match segment {
         Segment::Initialization { .. } => false,
         Segment::Sequence { format, .. } => match format {
-            MediaFormat::MpegTs => false,
-            MediaFormat::Aac => false,
-            MediaFormat::FMp4 => true,
             MediaFormat::Mp3 => true,
-            MediaFormat::WebVtt => false,
             _ => false,
         },
     };
