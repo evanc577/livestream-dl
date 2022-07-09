@@ -138,10 +138,8 @@ pub async fn remux<P: AsRef<Path> + Debug>(
         let output_path = if discons.len() == 1 {
             output_dir.as_ref().join(FILE_NAME)
         } else {
-            FILE_NAME
-                .to_string()
-                .push_str(&format!("_{:010}", discon_seq));
-            output_dir.as_ref().parent().unwrap().join(FILE_NAME)
+            let file_name = FILE_NAME.to_string() + &format!("_{:010}", discon_seq);
+            output_dir.as_ref().join(file_name)
         }
         .with_extension("mp4");
 
@@ -313,6 +311,7 @@ async fn ffmpeg_concat<P: AsRef<Path> + Debug>(
 /// Decide whether to use file or ffmpeg concat demuxer
 #[instrument(level = "trace")]
 async fn should_use_ffmpeg_concat(segment: &Segment) -> Result<bool> {
+    #[allow(clippy::match_like_matches_macro)]
     let use_ffmpeg = match segment {
         Segment::Initialization { .. } => false,
         Segment::Sequence { format, .. } => match format {
