@@ -41,3 +41,7 @@ url = "2.2"
 clap = { version = "3.2", features = ["derive"], default-features = false }
 clap_complete = { version = "3.2", default-features = false }
 reqwest = { version = "0.11", default-features = false }
+
+[profile.release]
+strip = true
+lto = true
