@@ -66,7 +66,7 @@ fn create_output_dir(output_dir: impl AsRef<Path>) -> Result<()> {
             "Found existing output directory {:?}, existing files may be overwritten.",
             output_dir.as_ref()
         );
-        eprint!("Is ths OK? [y/N] ");
+        eprint!("Is this OK? [y/N] ");
         let mut response = String::new();
         std::io::stdin().read_line(&mut response)?;
         if response.trim().to_lowercase() != "y" {
@@ -95,7 +95,7 @@ fn init_tracing(output_dir: impl AsRef<Path>) -> Result<()> {
         .without_time()
         .with_filter(LevelFilter::INFO);
 
-    // Start loggging
+    // Start logging
     let subscriber = tracing_subscriber::Registry::default()
         .with(stdout_log)
         .with(file_log);
