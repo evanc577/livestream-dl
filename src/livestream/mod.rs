@@ -5,6 +5,7 @@ mod playlist_fetcher;
 mod segment;
 mod stopper;
 mod stream;
+mod utils;
 
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -32,9 +33,9 @@ use self::playlist_fetcher::m3u8_fetcher;
 pub use self::segment::Segment;
 pub use self::stopper::Stopper;
 pub use self::stream::Stream;
+use self::utils::make_absolute_url;
 use crate::cli::{DownloadOptions, NetworkOptions};
 use crate::mux::remux;
-use crate::utils::make_absolute_url;
 
 #[derive(Debug)]
 pub struct Livestream {

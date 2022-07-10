@@ -4,9 +4,9 @@ use anyhow::Result;
 use m3u8_rs::Key;
 use reqwest::Url;
 use reqwest_middleware::ClientWithMiddleware;
-use tracing::{event, Level, instrument};
+use tracing::{event, instrument, Level};
 
-use crate::utils::make_absolute_url;
+use super::utils::make_absolute_url;
 
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
@@ -42,7 +42,11 @@ impl Encryption {
 
                     // Fetch key
                     let uri = make_absolute_url(base_url, uri)?;
-                    event!(Level::TRACE, "Fetching encryption key from {}", uri.as_str());
+                    event!(
+                        Level::TRACE,
+                        "Fetching encryption key from {}",
+                        uri.as_str()
+                    );
                     let body = client.get(uri).send().await?.bytes().await?;
                     let mut key = [0_u8; 16];
                     key.copy_from_slice(&body[..16]);

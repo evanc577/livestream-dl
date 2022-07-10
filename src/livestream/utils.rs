@@ -9,4 +9,3 @@ pub fn make_absolute_url(base: &Url, url: &str) -> Result<Url> {
         Err(e) => Err(e.into()),
     }
 }
-

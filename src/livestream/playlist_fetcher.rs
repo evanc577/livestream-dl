@@ -5,11 +5,11 @@ use futures::channel::mpsc;
 use reqwest::Url;
 use reqwest_middleware::ClientWithMiddleware;
 use tokio::time;
-use tracing::{event, Level, instrument};
+use tracing::{event, instrument, Level};
 
+use super::utils::make_absolute_url;
 use super::{Encryption, Segment, Stopper, Stream};
 use crate::livestream::{HashableByteRange, MediaFormat};
-use crate::utils::make_absolute_url;
 
 /// Periodically fetch m3u8 media playlist and send new segments to download task
 #[instrument(skip(client, notify_stop, tx))]
@@ -64,7 +64,11 @@ pub async fn m3u8_fetcher(
             if !init_downloaded {
                 if let Some(map) = &segment.map {
                     let init_url = make_absolute_url(&url, &map.uri)?;
-                    event!(Level::TRACE, "Found new initialization segment {}", init_url.as_str());
+                    event!(
+                        Level::TRACE,
+                        "Found new initialization segment {}",
+                        init_url.as_str()
+                    );
                     if tx
                         .unbounded_send((
                             stream.clone(),

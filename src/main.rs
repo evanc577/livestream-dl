@@ -1,7 +1,6 @@
 mod cli;
 mod livestream;
 mod mux;
-mod utils;
 
 use std::path::Path;
 
