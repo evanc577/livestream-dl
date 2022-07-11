@@ -6,6 +6,7 @@ mod segment;
 mod stopper;
 mod stream;
 mod utils;
+mod cookies;
 
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -26,6 +27,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tracing::{event, instrument, Level};
 
+use self::cookies::CookieJar;
 pub use self::encryption::Encryption;
 pub use self::hashable_byte_range::HashableByteRange;
 pub use self::media_format::MediaFormat;
@@ -34,7 +36,7 @@ pub use self::segment::Segment;
 pub use self::stopper::Stopper;
 pub use self::stream::Stream;
 use self::utils::make_absolute_url;
-use crate::cli::{DownloadOptions, NetworkOptions};
+use crate::cli::Args;
 use crate::mux::remux;
 
 #[derive(Debug)]
@@ -42,7 +44,7 @@ pub struct Livestream {
     streams: HashMap<Stream, Url>,
     client: ClientWithMiddleware,
     stopper: Stopper,
-    network_options: NetworkOptions,
+    options: Args,
 }
 
 type SegmentIdData = (Stream, Segment, Vec<u8>);
@@ -76,21 +78,41 @@ impl Livestream {
     /// If a master playlist is given, choose the highest bitrate variant and download its stream
     /// and all of its alternative media streams
     #[instrument(level = "trace")]
-    pub async fn new(url: &Url, network_options: &NetworkOptions) -> Result<(Self, Stopper)> {
+    pub async fn new(url: &Url, options: &Args) -> Result<(Self, Stopper)> {
         // Create reqwest client
         let client = Client::builder()
-            .timeout(Duration::from_secs(network_options.timeout))
-            .build()?;
+            .timeout(Duration::from_secs(options.network_options.timeout));
+
+        // Add cookie provider if needed
+        let client = if let Some(cookies_path) = &options.network_options.cookies {
+            let jar = CookieJar::parse_from_file(cookies_path)?;
+            client.cookie_provider(Arc::new(jar))
+        } else {
+            client
+        }
+        .build()?;
+
+        // Set client retry on failure
         let retry_policy = policies::ExponentialBackoff::builder()
             .retry_bounds(Duration::from_secs(1), Duration::from_secs(10))
             .backoff_exponent(2)
-            .build_with_max_retries(network_options.max_retries);
+            .build_with_max_retries(options.network_options.max_retries);
+
+        // Build client
         let client = ClientBuilder::new(client)
             .with(RetryTransientMiddleware::new_with_policy(retry_policy))
             .build();
 
-        // Check if m3u8 is master or media
+        // Get m3u8 playlist
         let resp = client.get(url.clone()).send().await?;
+        if !resp.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "Failed to fetch m3u8 playlist. Status code: {}",
+                resp.status().as_str(),
+            ));
+        }
+
+        // Check if m3u8 is master or media
         let final_url = resp.url().clone();
         let bytes = resp.bytes().await?;
 
@@ -154,7 +176,7 @@ impl Livestream {
                 streams,
                 client,
                 stopper: stopper.clone(),
-                network_options: network_options.clone(),
+                options: options.clone(),
             },
             stopper,
         ))
@@ -162,7 +184,7 @@ impl Livestream {
 
     /// Download the livestream to disk
     #[instrument(level = "trace")]
-    pub async fn download(&self, options: &DownloadOptions) -> Result<()> {
+    pub async fn download(&self) -> Result<()> {
         // m3u8 reader task handles
         let mut handles = Vec::new();
         // Check to fail fast if an m3u8 reader failed
@@ -180,7 +202,7 @@ impl Livestream {
                 let stream = stream.clone();
                 let url = url.clone();
                 let m3u8_reader_failed = m3u8_reader_failed.clone();
-                let no_fail_fast = options.no_fail_fast;
+                let no_fail_fast = self.options.download_options.no_fail_fast;
 
                 handles.push(tokio::spawn(async move {
                     let r = m3u8_fetcher(client, stopper.clone(), tx, stream, url).await;
@@ -196,7 +218,7 @@ impl Livestream {
         };
 
         // Create segments directory if needed
-        let segments_directory = options.output.join("segments");
+        let segments_directory = self.options.download_options.output.join("segments");
         fs::create_dir_all(&segments_directory).await?;
 
         // Save initializations for each stream
@@ -208,7 +230,7 @@ impl Livestream {
         // Download segments
         let mut buffered = rx
             .map(|(stream, seg, encryption)| fetch_segment(&self.client, stream, seg, encryption))
-            .buffered(self.network_options.max_concurrent_downloads);
+            .buffered(self.options.network_options.max_concurrent_downloads);
         while let Some(x) = buffered.next().await {
             // Quit immediately if an m3u8 reader failed
             if self.stopper.stopped().await && m3u8_reader_failed.load(Ordering::SeqCst) {
@@ -238,8 +260,8 @@ impl Livestream {
         }
 
         // Remux if necessary
-        if !options.no_remux {
-            remux(downloaded_segments, &options.output).await?;
+        if !self.options.download_options.no_remux {
+            remux(downloaded_segments, &self.options.download_options.output).await?;
         }
 
         // Check join handles

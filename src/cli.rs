@@ -47,11 +47,15 @@ pub struct NetworkOptions {
         long,
         value_parser,
         value_name = "SECONDS",
-        default_value_t = 30
+        default_value_t = 300,
     )]
     pub timeout: u64,
 
     /// Maximum number of concurrent downloads
     #[clap(short = 'j', long, value_parser, default_value_t = 20)]
     pub max_concurrent_downloads: usize,
+
+    /// Use cookies, path to cookies file in Netscape format
+    #[clap(short, long, value_parser, value_hint = clap::ValueHint::FilePath)]
+    pub cookies: Option<PathBuf>,
 }

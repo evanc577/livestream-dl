@@ -31,7 +31,7 @@ fn main() -> Result<()> {
 
 #[tokio::main]
 async fn run(args: cli::Args) -> Result<()> {
-    let (livestream, stopper) = Livestream::new(&args.m3u8_url, &args.network_options).await?;
+    let (livestream, stopper) = Livestream::new(&args.m3u8_url, &args).await?;
 
     // Gracefully exit on ctrl-c
     {
@@ -54,7 +54,7 @@ async fn run(args: cli::Args) -> Result<()> {
     }
 
     // Download stream
-    livestream.download(&args.download_options).await?;
+    livestream.download().await?;
 
     Ok(())
 }
