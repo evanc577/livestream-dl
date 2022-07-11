@@ -48,7 +48,7 @@ async fn run(args: cli::Args) -> Result<()> {
 
         tokio::spawn(async move {
             stream.recv().await;
-            event!(Level::INFO, "Stopping download... Press Ctrl-C again to force stop");
+            event!(Level::WARN, "Stopping download... Press Ctrl-C again to force stop");
             stopper.stop().await;
 
             tokio::spawn(async move {

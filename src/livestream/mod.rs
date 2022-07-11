@@ -1,3 +1,4 @@
+mod cookies;
 mod encryption;
 mod hashable_byte_range;
 mod media_format;
@@ -6,7 +7,6 @@ mod segment;
 mod stopper;
 mod stream;
 mod utils;
-mod cookies;
 
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -79,8 +79,8 @@ impl Livestream {
     #[instrument(level = "trace")]
     pub async fn new(url: &Url, options: &Args) -> Result<(Self, Stopper)> {
         // Create reqwest client
-        let client = Client::builder()
-            .timeout(Duration::from_secs(options.network_options.timeout));
+        let client =
+            Client::builder().timeout(Duration::from_secs(options.network_options.timeout));
 
         // Add cookie provider if needed
         let client = if let Some(cookies_path) = &options.network_options.cookies {
@@ -221,7 +221,10 @@ impl Livestream {
         let mut buffered = rx
             .map(|(stream, seg, encryption)| fetch_segment(&self.client, stream, seg, encryption))
             .buffered(self.options.network_options.max_concurrent_downloads);
-        while let Some(x) = buffered.next().await {
+        while let Some(x) = tokio::select! {
+            y = buffered.next() => { y },
+            _ = self.stopper.wait() => { None }
+        } {
             // Quit immediately stopped
             if self.stopper.stopped().await {
                 break;
@@ -256,11 +259,7 @@ impl Livestream {
 
         // Check join handles
         for handle in handles {
-            if handle.is_finished() {
-                handle.await??;
-            } else {
-                handle.abort();
-            }
+            handle.await??;
         }
 
         Ok(())
@@ -293,7 +292,7 @@ async fn fetch_segment(
         .collect();
 
     // Decrypt
-    let bytes = encryption.decrypt(&bytes)?;
+    let bytes = encryption.decrypt(client, &bytes).await?;
 
     event!(
         Level::INFO,

@@ -53,7 +53,7 @@ pub async fn m3u8_fetcher(
 
             // Check encryption
             if let Some(key) = &segment.key {
-                encryption = Encryption::new(&client, key, &url, seq).await?;
+                encryption = Encryption::new(key, &url, seq).await?;
             }
 
             // Segment is new
@@ -117,7 +117,7 @@ pub async fn m3u8_fetcher(
 
         // Return if stream ended
         if media_playlist.end_list {
-            event!(Level::INFO, "Playlist ended");
+            event!(Level::TRACE, "Playlist ended");
             return Ok(());
         }
 
