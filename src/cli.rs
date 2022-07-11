@@ -28,10 +28,6 @@ pub struct DownloadOptions {
     /// Don't remux streams to mp4
     #[clap(long, value_parser)]
     pub no_remux: bool,
-
-    /// Don't exit immediately if an m3u8 fetcher task fails
-    #[clap(long, value_parser, default_value_t = false)]
-    pub no_fail_fast: bool,
 }
 
 #[derive(Parser, Clone, Debug)]

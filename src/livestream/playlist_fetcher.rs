@@ -117,7 +117,7 @@ pub async fn m3u8_fetcher(
 
         // Return if stream ended
         if media_playlist.end_list {
-            event!(Level::TRACE, "Playlist ended");
+            event!(Level::INFO, "Playlist ended");
             return Ok(());
         }
 
