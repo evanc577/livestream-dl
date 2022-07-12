@@ -5,7 +5,7 @@ edition = "2021"
 build = "build.rs"
 license = "GPL-3.0"
 readme = "README.md"
-description = "An m3u8 livestream downloader"
+description = "A HLS livestream downloader"
 repository = "https://github.com/evanc577/livestream-dl"
 categories = ["command-line-utilities", "multimedia"]
 

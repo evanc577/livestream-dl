@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use reqwest::Url;
 
-/// An m3u8 livestream downloader
+/// A HLS (m3u8) livestream downloader
 #[derive(Parser, Clone, Debug)]
 #[clap(version, about)]
 pub struct Args {

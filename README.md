@@ -1,6 +1,6 @@
 # livestream-dl
 
-An experimental m3u8 livestream downloader
+An experimental HLS (m3u8) livestream downloader
 
 ## Features
 
