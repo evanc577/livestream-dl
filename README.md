@@ -12,5 +12,5 @@ An experimental m3u8 livestream downloader
 - [x] Byte-range for URIs
 - [x] Discontinuities
 - [x] Decryption
-- [ ] Cookies
+- [x] Cookies
 - [ ] Manual quality selection

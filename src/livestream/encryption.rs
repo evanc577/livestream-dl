@@ -15,8 +15,7 @@ type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 #[derive(Clone, Debug)]
 pub enum Encryption {
     None,
-    //Aes128 { key: [u8; 16], iv: [u8; 16] },
-    Aes128 { uri: Url, iv: Option<String>, seq: u64 },
+    Aes128 { key_uri: Url, iv: [u8; 16] },
     SampleAes,
 }
 
@@ -24,11 +23,7 @@ impl Encryption {
     /// Check m3u8_key and return encryption.
     /// If encrypted, will make a query to the designated url to fetch the key
     #[instrument]
-    pub async fn new(
-        m3u8_key: &Key,
-        base_url: &Url,
-        seq: u64,
-    ) -> Result<Self> {
+    pub async fn new(m3u8_key: &Key, base_url: &Url, seq: u64) -> Result<Self> {
         let encryption = match &m3u8_key {
             k if k.method == "NONE" => Self::None,
             k if k.method == "AES-128" => {
@@ -42,10 +37,20 @@ impl Encryption {
 
                     // Fetch key
                     let uri = make_absolute_url(base_url, uri)?;
-                    Self::Aes128 { uri, iv: k.iv.clone(), seq }
 
-                    //// Success
-                    //Self::Aes128 { key, iv }
+                    // Parse IV
+                    let mut iv = [0_u8; 16];
+                    if let Some(iv_str) = &k.iv {
+                        // IV is given separately
+                        let iv_str = iv_str.trim_start_matches("0x");
+                        hex::decode_to_slice(iv_str, &mut iv as &mut [u8])?;
+                    } else {
+                        // Compute IV from segment sequence
+                        iv[(16 - std::mem::size_of_val(&seq))..]
+                            .copy_from_slice(&seq.to_be_bytes());
+                    }
+
+                    Self::Aes128 { key_uri: uri, iv }
                 } else {
                     // Bail if no uri is found
                     return Err(anyhow::anyhow!("No URI found for AES-128 key"));
@@ -68,29 +73,18 @@ impl Encryption {
     pub async fn decrypt(&self, client: &ClientWithMiddleware, data: &[u8]) -> Result<Vec<u8>> {
         let r = match self {
             Self::None => Vec::from(data),
-            Self::Aes128 { uri, iv: iv_str, seq } => {
+            Self::Aes128 { key_uri, iv } => {
                 event!(
                     Level::TRACE,
                     "Fetching encryption key from {}",
-                    uri.as_str()
+                    key_uri.as_str()
                 );
-                let body = client.get(uri.clone()).send().await?.bytes().await?;
+                let body = client.get(key_uri.clone()).send().await?.bytes().await?;
                 let mut key = [0_u8; 16];
                 key.copy_from_slice(&body[..16]);
 
-                // Parse IV
-                let mut iv = [0_u8; 16];
-                if let Some(iv_str) = iv_str {
-                    // IV is given separately
-                    let iv_str = iv_str.trim_start_matches("0x");
-                    hex::decode_to_slice(iv_str, &mut iv as &mut [u8])?;
-                } else {
-                    // Compute IV from segment sequence
-                    iv[(16 - std::mem::size_of_val(&seq))..].copy_from_slice(&seq.to_be_bytes());
-                }
-
                 event!(Level::TRACE, "Decrypting segment");
-                Aes128CbcDec::new(&key.into(), &iv.into()).decrypt_padded_vec_mut::<Pkcs7>(data)?
+                Aes128CbcDec::new(&key.into(), iv.into()).decrypt_padded_vec_mut::<Pkcs7>(data)?
             }
             Self::SampleAes => unimplemented!(),
         };

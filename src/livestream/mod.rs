@@ -221,11 +221,13 @@ impl Livestream {
         let mut buffered = rx
             .map(|(stream, seg, encryption)| fetch_segment(&self.client, stream, seg, encryption))
             .buffered(self.options.network_options.max_concurrent_downloads);
+
+        // Save segments to disk in order, break if stopped
         while let Some(x) = tokio::select! {
             y = buffered.next() => { y },
             _ = self.stopper.wait() => { None }
         } {
-            // Quit immediately stopped
+            // Quit immediately if stopped
             if self.stopper.stopped().await {
                 break;
             }
@@ -257,7 +259,7 @@ impl Livestream {
             remux(downloaded_segments, &self.options.download_options.output).await?;
         }
 
-        // Check join handles
+        // Check playlist fetcher task join handles
         for handle in handles {
             handle.await??;
         }
