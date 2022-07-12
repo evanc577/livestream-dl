@@ -28,6 +28,10 @@ pub struct DownloadOptions {
     /// Don't remux streams to mp4
     #[clap(long, value_parser)]
     pub no_remux: bool,
+
+    /// Show interactive stream picker, if this option is not given, choose highest bitrate stream
+    #[clap(long, value_parser)]
+    pub choose_stream: bool,
 }
 
 #[derive(Parser, Clone, Debug)]

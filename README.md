@@ -13,4 +13,4 @@ An experimental m3u8 livestream downloader
 - [x] Discontinuities
 - [x] Decryption
 - [x] Cookies
-- [ ] Manual quality selection
+- [x] Interactive quality selection

@@ -7,6 +7,7 @@ mod segment;
 mod stopper;
 mod stream;
 mod utils;
+mod displayable_variant;
 
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -17,6 +18,7 @@ use std::time::Duration;
 use anyhow::Result;
 use futures::channel::mpsc;
 use futures::StreamExt;
+use itertools::Itertools;
 use m3u8_rs::Playlist;
 use reqwest::header::{self, HeaderMap};
 use reqwest::{Client, Url};
@@ -35,6 +37,7 @@ pub use self::segment::Segment;
 pub use self::stopper::Stopper;
 pub use self::stream::Stream;
 use self::utils::make_absolute_url;
+use self::displayable_variant::DisplayableVariant;
 use crate::cli::Args;
 use crate::mux::remux;
 
@@ -119,22 +122,36 @@ impl Livestream {
         let mut streams = HashMap::new();
         match m3u8_rs::parse_playlist(&bytes) {
             Ok((_, Playlist::MasterPlaylist(p))) => {
-                // Find best variant
-                let max_stream = p
-                    .variants
-                    .into_iter()
-                    .filter_map(|v| Some((v.bandwidth.parse::<u64>().ok()?, v)))
-                    .max_by_key(|(x, _)| *x)
-                    .ok_or_else(|| anyhow::anyhow!("No streams found"))?
-                    .1;
+                let stream = if !options.download_options.choose_stream {
+                    // Pick highest bitrate stream
+                    p.variants
+                        .iter()
+                        .filter_map(|v| Some((v.bandwidth.parse::<u64>().ok()?, v)))
+                        .max_by_key(|(x, _)| *x)
+                        .ok_or_else(|| anyhow::anyhow!("No streams found"))?
+                        .1
+                } else {
+                    // Show stream chooser
+                    let options: Vec<_> = p
+                        .variants
+                        .iter()
+                        .filter_map(|v| Some((v.bandwidth.parse::<u64>().ok()?, v)))
+                        .sorted_by_key(|(b, _)| *b)
+                        .map(|(_, v)| v)
+                        .rev()
+                        .map(DisplayableVariant::from)
+                        .collect();
+                    let response = inquire::Select::new("Choose stream", options).prompt()?;
+                    response.into()
+                };
 
                 // Add main stream
-                streams.insert(Stream::Main, make_absolute_url(url, &max_stream.uri)?);
+                streams.insert(Stream::Main, make_absolute_url(url, &stream.uri)?);
 
                 // Closure to find alternative media with matching group id and add them to streams
                 let mut add_alternative =
                     |group, f: fn(String, Option<String>) -> Stream| -> Result<()> {
-                        for a in p.alternatives.iter().filter(|a| a.group_id == group) {
+                        for a in p.alternatives.iter().filter(|a| &a.group_id == group) {
                             if let Some(a_url) = &a.uri {
                                 streams.insert(
                                     f(a.name.clone(), a.language.clone()),
@@ -146,18 +163,17 @@ impl Livestream {
                     };
 
                 // Add audio streams
-                if let Some(group) = max_stream.audio {
+                if let Some(group) = &stream.audio {
                     add_alternative(group, |n, l| Stream::Audio { name: n, lang: l })?;
                 }
 
                 // Add video streams
-                if let Some(group) = max_stream.video {
+                if let Some(group) = &stream.video {
                     add_alternative(group, |n, l| Stream::Video { name: n, lang: l })?;
                 }
 
                 // Add subtitle streams
-                if let Some(group) = max_stream.subtitles {
-                    add_alternative(group, |n, l| Stream::Subtitle { name: n, lang: l })?;
+                if let Some(group) = &stream.subtitles {    add_alternative(group, |n, l| Stream::Subtitle { name: n, lang: l })?;
                 }
             }
             Ok((_, Playlist::MediaPlaylist(_))) => {

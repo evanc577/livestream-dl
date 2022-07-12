@@ -48,7 +48,10 @@ async fn run(args: cli::Args) -> Result<()> {
 
         tokio::spawn(async move {
             stream.recv().await;
-            event!(Level::WARN, "Stopping download... Press Ctrl-C again to force stop");
+            event!(
+                Level::WARN,
+                "Stopping download... Press Ctrl-C again to force stop"
+            );
             stopper.stop().await;
 
             tokio::spawn(async move {
@@ -66,19 +69,23 @@ async fn run(args: cli::Args) -> Result<()> {
 }
 
 fn create_output_dir(output_dir: impl AsRef<Path>) -> Result<()> {
+    // If output directory already exists, prompt user to overwrite, otherwise exit
     if output_dir.as_ref().is_dir() {
-        eprintln!(
-            "Found existing output directory {:?}, existing files may be overwritten.",
+        let response = inquire::Confirm::new(&format!(
+            "Found existing output directory {:?}, existing files may be overwritten.\nIs this OK?",
             output_dir.as_ref()
-        );
-        eprint!("Is this OK? [y/N] ");
-        let mut response = String::new();
-        std::io::stdin().read_line(&mut response)?;
-        if response.trim().to_lowercase() != "y" {
+        ))
+        .with_default(false)
+        .prompt()?;
+
+        if !response {
             return Err(anyhow::anyhow!("Not downloading into existing directory"));
         }
     }
+
+    // Create directory
     std::fs::create_dir_all(output_dir)?;
+
     Ok(())
 }
 
