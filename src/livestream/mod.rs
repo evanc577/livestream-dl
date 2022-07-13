@@ -1,4 +1,5 @@
 mod cookies;
+mod displayable_variant;
 mod encryption;
 mod hashable_byte_range;
 mod media_format;
@@ -7,7 +8,6 @@ mod segment;
 mod stopper;
 mod stream;
 mod utils;
-mod displayable_variant;
 
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -29,6 +29,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::{event, instrument, Level};
 
 use self::cookies::CookieJar;
+use self::displayable_variant::DisplayableVariant;
 pub use self::encryption::Encryption;
 pub use self::hashable_byte_range::HashableByteRange;
 pub use self::media_format::MediaFormat;
@@ -37,7 +38,6 @@ pub use self::segment::Segment;
 pub use self::stopper::Stopper;
 pub use self::stream::Stream;
 use self::utils::make_absolute_url;
-use self::displayable_variant::DisplayableVariant;
 use crate::cli::Args;
 use crate::mux::remux;
 
@@ -173,7 +173,8 @@ impl Livestream {
                 }
 
                 // Add subtitle streams
-                if let Some(group) = &stream.subtitles {    add_alternative(group, |n, l| Stream::Subtitle { name: n, lang: l })?;
+                if let Some(group) = &stream.subtitles {
+                    add_alternative(group, |n, l| Stream::Subtitle { name: n, lang: l })?;
                 }
             }
             Ok((_, Playlist::MediaPlaylist(_))) => {

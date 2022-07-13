@@ -47,7 +47,7 @@ pub struct NetworkOptions {
         long,
         value_parser,
         value_name = "SECONDS",
-        default_value_t = 300,
+        default_value_t = 300
     )]
     pub timeout: u64,
 

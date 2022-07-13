@@ -28,4 +28,3 @@ impl Stopper {
         self.0 .0.notify_waiters();
     }
 }
-

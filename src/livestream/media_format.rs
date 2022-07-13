@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tokio::process;
-use tracing::{event, Level, instrument};
+use tracing::{event, instrument, Level};
 
 #[non_exhaustive]
 #[allow(dead_code)]
@@ -61,9 +61,7 @@ impl MediaFormat {
             .ok_or_else(|| anyhow::anyhow!("Can't open ffprobe stdin"))?;
 
         // Write to ffprobe stdin
-        tokio::spawn(async move {
-            stdin.write_all(&data).await
-        });
+        tokio::spawn(async move { stdin.write_all(&data).await });
 
         // Run ffprobe
         let output = child.wait_with_output().await?;
@@ -71,7 +69,11 @@ impl MediaFormat {
 
         // Check ffprobe exit status
         if !output.status.success() {
-            event!(Level::TRACE, "ffprobe detect format failed, output: {:?}", utf8_output);
+            event!(
+                Level::TRACE,
+                "ffprobe detect format failed, output: {:?}",
+                utf8_output
+            );
             return Ok(Self::Unknown);
         }
 
@@ -79,7 +81,12 @@ impl MediaFormat {
         let parsed: Result<FFProbeOuput, _> = serde_json::from_str(&utf8_output);
         match parsed {
             Err(e) => {
-                event!(Level::TRACE, "Unable to parse ffprobe output: {:?}, {:?}", utf8_output, e);
+                event!(
+                    Level::TRACE,
+                    "Unable to parse ffprobe output: {:?}, {:?}",
+                    utf8_output,
+                    e
+                );
                 Ok(Self::Unknown)
             }
             Ok(o) => {
