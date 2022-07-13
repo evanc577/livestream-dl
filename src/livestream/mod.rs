@@ -200,7 +200,7 @@ impl Livestream {
 
     /// Download the livestream to disk
     #[instrument(level = "trace")]
-    pub async fn download(&self) -> Result<()> {
+    pub async fn download(&self, output: &Path) -> Result<()> {
         // m3u8 reader task handles
         let mut handles = Vec::new();
 
@@ -225,7 +225,7 @@ impl Livestream {
         };
 
         // Create segments directory if needed
-        let segments_directory = self.options.download_options.output.join("segments");
+        let segments_directory = output.join("segments");
         fs::create_dir_all(&segments_directory).await?;
 
         // Save initializations for each stream
@@ -273,7 +273,7 @@ impl Livestream {
 
         // Remux if necessary
         if !self.options.download_options.no_remux {
-            remux(downloaded_segments, &self.options.download_options.output).await?;
+            remux(downloaded_segments, output).await?;
         }
 
         // Check playlist fetcher task join handles

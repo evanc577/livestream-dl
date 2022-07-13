@@ -16,9 +16,9 @@ use crate::livestream::{Segment, Stream};
 
 /// Remux media files into a single mp4 file with ffmpeg
 #[instrument(level = "trace")]
-pub async fn remux<P: AsRef<Path> + Debug>(
+pub async fn remux(
     downloaded_paths: HashMap<Stream, Vec<(Segment, PathBuf)>>,
-    output_dir: P,
+    output_dir: &Path,
 ) -> Result<()> {
     // Get list of concatenated streams for each discontinuity
     let discons = concat_streams(&downloaded_paths, &output_dir).await?;
@@ -28,10 +28,10 @@ pub async fn remux<P: AsRef<Path> + Debug>(
         // Generate output name
         const FILE_NAME: &str = "video";
         let output_path = if discons.len() == 1 {
-            output_dir.as_ref().join(FILE_NAME)
+            output_dir.join(FILE_NAME)
         } else {
             let file_name = FILE_NAME.to_string() + &format!("_{:010}", discon_seq);
-            output_dir.as_ref().join(file_name)
+            output_dir.join(file_name)
         }
         .with_extension("mp4");
 

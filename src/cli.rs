@@ -21,15 +21,16 @@ pub struct Args {
 #[derive(Parser, Clone, Debug)]
 #[clap(help_heading = "DOWNLOAD OPTIONS")]
 pub struct DownloadOptions {
-    /// Output directory
-    #[clap(short, long, value_parser, value_hint = clap::ValueHint::DirPath)]
-    pub output: PathBuf,
+    /// Output directory, should be non-existent. If not specified, automatically generate
+    #[clap(short, long, value_parser)]
+    pub output: Option<PathBuf>,
 
-    /// Don't remux streams to mp4
+    /// Don't remux streams to mp4 after download
     #[clap(long, value_parser)]
     pub no_remux: bool,
 
-    /// Show interactive stream picker, if this option is not given, choose highest bitrate stream
+    /// Show interactive stream picker. If not specified, automatically choose highest bitrate
+    /// stream
     #[clap(long, value_parser)]
     pub choose_stream: bool,
 }

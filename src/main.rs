@@ -2,7 +2,8 @@ mod cli;
 mod livestream;
 mod mux;
 
-use std::path::Path;
+use std::fmt::Debug;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
@@ -17,11 +18,11 @@ fn main() -> Result<()> {
     let args = cli::Args::parse();
 
     // Init logging
-    create_output_dir(&args.download_options.output)?;
-    init_tracing(&args.download_options.output)?;
+    let output = create_output_dir(&args.download_options.output)?;
+    init_tracing(&output)?;
 
     // Run main program
-    if let Err(e) = run(args) {
+    if let Err(e) = run(args, output) {
         event!(Level::ERROR, "{}", e);
         std::process::exit(1);
     }
@@ -30,7 +31,7 @@ fn main() -> Result<()> {
 }
 
 #[tokio::main]
-async fn run(args: cli::Args) -> Result<()> {
+async fn run(args: cli::Args, output: impl AsRef<Path>) -> Result<()> {
     let (livestream, stopper) = Livestream::new(&args.m3u8_url, &args).await?;
 
     // Gracefully exit on ctrl-c
@@ -63,30 +64,51 @@ async fn run(args: cli::Args) -> Result<()> {
     }
 
     // Download stream
-    livestream.download().await?;
+    event!(Level::INFO, "Downloading stream to {:?}", output.as_ref());
+    livestream.download(output.as_ref()).await?;
 
     Ok(())
 }
 
-fn create_output_dir(output_dir: impl AsRef<Path>) -> Result<()> {
-    // If output directory already exists, prompt user to overwrite, otherwise exit
-    if output_dir.as_ref().is_dir() {
-        let response = inquire::Confirm::new(&format!(
-            "Found existing output directory {:?}, existing files may be overwritten.\nIs this OK?",
-            output_dir.as_ref()
-        ))
-        .with_default(false)
-        .prompt()?;
+fn create_output_dir(output_dir: &Option<impl AsRef<Path> + Debug>) -> Result<PathBuf> {
+    let final_output_dir = if let Some(output_dir) = output_dir {
+        // If output directory already exists, prompt user to overwrite, otherwise exit
+        if output_dir.as_ref().is_dir() {
+            let response = inquire::Confirm::new(&format!(
+                    "Found existing output directory {:?}, existing files may be overwritten.\nIs this OK?",
+                    output_dir.as_ref()
+                    ))
+                .with_default(false)
+                .prompt()?;
 
-        if !response {
-            return Err(anyhow::anyhow!("Not downloading into existing directory"));
+            if !response {
+                return Err(anyhow::anyhow!("Not downloading into existing directory"));
+            }
         }
-    }
+
+        output_dir.as_ref().to_path_buf()
+    } else {
+        // Generate a path
+        let now = time::OffsetDateTime::now_local()?;
+        let format = time::format_description::parse("[year][month][day]")?;
+        let base_file_name = format!("{}-stream-download", now.format(&format)?);
+        let mut candidate_path = std::env::current_dir()?.join(&base_file_name);
+
+        // Try different paths until a non-existing one is found
+        let mut counter = 1;
+        while candidate_path.exists() {
+            candidate_path =
+                candidate_path.with_file_name(base_file_name.clone() + &format!(".{}", counter));
+            counter += 1;
+        }
+
+        candidate_path
+    };
 
     // Create directory
-    std::fs::create_dir_all(output_dir)?;
+    std::fs::create_dir_all(&final_output_dir)?;
 
-    Ok(())
+    Ok(final_output_dir)
 }
 
 fn init_tracing(output_dir: impl AsRef<Path>) -> Result<()> {
