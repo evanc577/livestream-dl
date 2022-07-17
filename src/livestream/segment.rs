@@ -1,65 +1,38 @@
 use reqwest::Url;
 
-use super::{HashableByteRange, MediaFormat};
+use super::remote_data::RemoteData;
+use super::MediaFormat;
 
 /// Type of media segment
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub enum Segment {
-    Initialization {
-        url: Url,
-        byte_range: Option<HashableByteRange>,
-    },
-    Sequence {
-        url: Url,
-        byte_range: Option<HashableByteRange>,
-        discon_seq: u64,
-        seq: u64,
-        format: MediaFormat,
-    },
+pub struct Segment {
+    pub data: RemoteData,
+    pub discon_seq: u64,
+    pub seq: u64,
+    pub format: MediaFormat,
+    pub initialization: Option<RemoteData>,
 }
 
 impl Segment {
     /// URL of segment
     pub fn url(&self) -> &Url {
-        match self {
-            Self::Initialization { url: u, .. } => u,
-            Self::Sequence { url: u, .. } => u,
-        }
+        self.data.url()
     }
 
     /// String identifier of segment
     pub fn id(&self) -> String {
-        match self {
-            Self::Initialization { .. } => "init".into(),
-            Self::Sequence {
-                discon_seq: d,
-                seq: s,
-                ..
-            } => format!("d{:010}s{:010}", d, s),
-        }
+        format!("d{:010}s{:010}", self.discon_seq, self.seq)
     }
+}
 
-    pub fn byte_range(&self) -> Option<String> {
-        let range = match self {
-            Self::Initialization {
-                byte_range: None, ..
-            } => return None,
-            Self::Sequence {
-                byte_range: None, ..
-            } => return None,
-            Self::Initialization {
-                byte_range: Some(b),
-                ..
-            } => b,
-            Self::Sequence {
-                byte_range: Some(b),
-                ..
-            } => b,
-        };
+impl PartialOrd for Segment {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
-        let start = range.offset.unwrap_or(0);
-        let end = start + range.length.saturating_sub(1);
-
-        Some(format!("bytes={}-{}", start, end))
+impl Ord for Segment {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.discon_seq, self.seq).cmp(&(other.discon_seq, other.seq))
     }
 }

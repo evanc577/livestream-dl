@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 use std::env;
 use std::fmt::Debug;
 use std::io::Write;
@@ -14,7 +14,7 @@ use crate::livestream::{MediaFormat, Segment, Stream};
 
 /// For each discontinuity, concatenate all streams
 pub async fn concat_streams<P: AsRef<Path> + Debug>(
-    downloaded_paths: &HashMap<Stream, Vec<(Segment, PathBuf)>>,
+    downloaded_paths: &HashMap<Stream, BinaryHeap<(Segment, PathBuf)>>,
     output_dir: P,
 ) -> Result<HashMap<u64, Vec<(&Stream, PathBuf)>>> {
     // Map discon seq -> Vec<(stream, concatenated path)>
@@ -22,54 +22,48 @@ pub async fn concat_streams<P: AsRef<Path> + Debug>(
 
     // Loop through all streams and discontinuity sequences and concatenate them
     for (stream, segments) in downloaded_paths.iter() {
-        let mut segments_to_process = Vec::new();
+        let mut segments_to_process: Vec<(&Segment, &PathBuf)> = Vec::new();
         let mut cur_discon_seq = None;
 
-        for (segment, path) in segments {
-            match segment {
-                Segment::Initialization { .. } => {
-                    panic!("Expected Segment::Sequence, got Segment::Initialization")
-                }
-                Segment::Sequence { discon_seq: d, .. } => {
-                    if cur_discon_seq.is_none() {
-                        cur_discon_seq = Some(d);
-                    }
+        let segments = segments.clone().into_sorted_vec();
+        for (segment, path) in segments.iter() {
+            if cur_discon_seq.is_none() {
+                cur_discon_seq = Some(segment.discon_seq);
+            }
 
-                    if cur_discon_seq.map(|x| x == d).unwrap() {
-                        // Add current segment to be processed
-                        segments_to_process.push((segment, path.as_path()));
-                    } else {
-                        // If discontinuity changed, concat all previous discontinuity segments
-                        if !segments_to_process.is_empty() {
-                            let file_path = gen_concat_path(
-                                stream,
-                                segments_to_process[0].0,
-                                &output_dir,
-                                *cur_discon_seq.unwrap(),
-                            )?;
-                            concat_segments(segments_to_process.as_slice(), &file_path).await?;
-                            discons
-                                .entry(*cur_discon_seq.unwrap())
-                                .or_default()
-                                .push((stream, file_path));
-                        }
-
-                        // Reset segments to process, push current segment, and update current
-                        // discontinuity sequence
-                        segments_to_process.clear();
-                        segments_to_process.push((segment, path.as_path()));
-                        cur_discon_seq = Some(d);
-                    }
+            if cur_discon_seq.map(|x| x == segment.discon_seq).unwrap() {
+                // Add current segment to be processed
+                segments_to_process.push((segment, path));
+            } else {
+                // If discontinuity changed, concat all previous discontinuity segments
+                if !segments_to_process.is_empty() {
+                    let file_path = gen_concat_path(
+                        stream,
+                        segments_to_process[0].0,
+                        &output_dir,
+                        cur_discon_seq.unwrap(),
+                    )?;
+                    concat_segments(segments_to_process.as_slice(), &file_path).await?;
+                    discons
+                        .entry(cur_discon_seq.unwrap())
+                        .or_default()
+                        .push((stream, file_path));
                 }
+
+                // Reset segments to process, push current segment, and update current
+                // discontinuity sequence
+                segments_to_process.clear();
+                segments_to_process.push((segment, path));
+                cur_discon_seq = Some(segment.discon_seq);
             }
         }
 
         // Concat last discontinuity
         if !segments_to_process.is_empty() {
             let d = cur_discon_seq.unwrap();
-            let file_path = gen_concat_path(stream, segments_to_process[0].0, &output_dir, *d)?;
+            let file_path = gen_concat_path(stream, segments_to_process[0].0, &output_dir, d)?;
             concat_segments(segments_to_process.as_slice(), &file_path).await?;
-            discons.entry(*d).or_default().push((stream, file_path));
+            discons.entry(d).or_default().push((stream, file_path));
         }
     }
 
@@ -82,14 +76,7 @@ fn gen_concat_path(
     output_dir: impl AsRef<Path> + Debug,
     d: u64,
 ) -> Result<PathBuf> {
-    let ext = match segment {
-        Segment::Initialization { .. } => {
-            return Err(anyhow::anyhow!(
-                "gen_concat_path got initialization expected sequence"
-            ))
-        }
-        Segment::Sequence { format, .. } => format.extension(),
-    };
+    let ext = segment.format.extension();
     let file_name = format!("{}_{:010}.{}", stream, d, ext);
     let file_path = output_dir.as_ref().join(file_name);
     Ok(file_path)
@@ -189,12 +176,9 @@ async fn ffmpeg_concat<P: AsRef<Path> + Debug>(
 /// Decide whether to use file or ffmpeg concat demuxer
 async fn should_use_ffmpeg_concat(segment: &Segment) -> Result<bool> {
     #[allow(clippy::match_like_matches_macro)]
-    let use_ffmpeg = match segment {
-        Segment::Initialization { .. } => false,
-        Segment::Sequence { format, .. } => match format {
-            MediaFormat::Mp3 => true,
-            _ => false,
-        },
+    let use_ffmpeg = match segment.format {
+        MediaFormat::Mp3 => true,
+        _ => false,
     };
 
     Ok(use_ffmpeg)

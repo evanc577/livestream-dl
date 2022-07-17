@@ -4,12 +4,13 @@ mod encryption;
 mod hashable_byte_range;
 mod media_format;
 mod playlist_fetcher;
+mod remote_data;
 mod segment;
 mod stopper;
 mod stream;
 mod utils;
 
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 use std::fmt::{Debug, Display};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,13 +20,14 @@ use anyhow::Result;
 use futures::channel::mpsc;
 use futures::StreamExt;
 use itertools::Itertools;
+use lru::LruCache;
 use m3u8_rs::Playlist;
-use reqwest::header::{self, HeaderMap};
 use reqwest::{Client, Url};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies, RetryTransientMiddleware};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex;
 use tracing::{event, instrument, Level};
 
 use self::cookies::CookieJar;
@@ -34,6 +36,7 @@ pub use self::encryption::Encryption;
 pub use self::hashable_byte_range::HashableByteRange;
 pub use self::media_format::MediaFormat;
 use self::playlist_fetcher::m3u8_fetcher;
+use self::remote_data::RemoteData;
 pub use self::segment::Segment;
 pub use self::stopper::Stopper;
 pub use self::stream::Stream;
@@ -228,16 +231,35 @@ impl Livestream {
         let segments_directory = output.join("segments");
         fs::create_dir_all(&segments_directory).await?;
 
-        // Save initializations for each stream
-        let mut init_map = HashMap::new();
+        // Cache initializations for each stream
+        let init_lrus: HashMap<_, _> = self
+            .streams
+            .keys()
+            .map(|k| {
+                (
+                    k,
+                    Arc::new(Mutex::new(LruCache::new(
+                        self.options.network_options.max_concurrent_downloads,
+                    ))),
+                )
+            })
+            .collect();
 
         // Save paths for each downloaded segment
         let mut downloaded_segments = HashMap::new();
 
         // Download segments
         let mut buffered = rx
-            .map(|(stream, seg, encryption)| fetch_segment(&self.client, stream, seg, encryption))
-            .buffered(self.options.network_options.max_concurrent_downloads);
+            .map(|(stream, seg, encryption)| {
+                fetch_segment(
+                    &self.client,
+                    init_lrus[&stream].clone(),
+                    stream,
+                    seg,
+                    encryption,
+                )
+            })
+            .buffer_unordered(self.options.network_options.max_concurrent_downloads);
 
         // Save segments to disk in order, break if stopped
         while let Some(x) = tokio::select! {
@@ -252,13 +274,7 @@ impl Livestream {
             // Save the segment
             let id_data = x?;
             let segment = id_data.1.clone();
-            let res = save_segment(
-                id_data,
-                &mut init_map,
-                &mut downloaded_segments,
-                &segments_directory,
-            )
-            .await;
+            let res = save_segment(id_data, &mut downloaded_segments, &segments_directory).await;
 
             // Log warning if segment failed to download
             if let Err(e) = res {
@@ -289,85 +305,79 @@ impl Livestream {
 #[instrument(level = "trace")]
 async fn fetch_segment(
     client: &ClientWithMiddleware,
+    lru: Arc<Mutex<LruCache<RemoteData, Vec<u8>>>>,
     stream: Stream,
     segment: Segment,
     encryption: Encryption,
 ) -> Result<SegmentIdData> {
-    let mut header_map = HeaderMap::new();
-    let byte_range = segment.byte_range();
-    if let Some(ref range) = byte_range {
-        header_map.insert(header::RANGE, header::HeaderValue::from_str(range)?);
-    }
+    // Get initialization
+    let init_bytes = if let Some(ref i) = segment.initialization {
+        // Get cached initialization, otherwise fetch from network
+        let mut guard = lru.lock().await;
+        let data = guard.get(i).cloned();
+        match data {
+            Some(d) => d,
+            None => {
+                let d = i.fetch(client).await?;
+                guard.put(i.clone(), d.clone());
+                d
+            }
+        }
+    } else {
+        Vec::new()
+    };
 
     // Fetch segment
-    let bytes: Vec<u8> = client
-        .get(segment.url().clone())
-        .headers(header_map)
-        .send()
-        .await?
-        .bytes()
-        .await?
-        .into_iter()
-        .collect();
+    let data_bytes = segment.data.fetch(client).await?;
+    let decrypt_data_bytes = encryption.decrypt(client, &data_bytes).await?;
 
-    // Decrypt
-    let bytes = encryption.decrypt(client, &bytes).await?;
+    // Concat initialization and segment
+    let bytes = init_bytes
+        .into_iter()
+        .chain(decrypt_data_bytes.into_iter())
+        .collect();
 
     event!(
         Level::INFO,
         "Downloaded {} {}",
         segment.url().as_str(),
-        byte_range.unwrap_or_else(|| "".into())
+        segment
+            .data
+            .byte_range_string()
+            .unwrap_or_else(|| "".into())
     );
 
     Ok((stream, segment, bytes))
 }
 
-#[instrument(level = "trace", skip(bytes, init_map))]
+#[instrument(level = "trace", skip(bytes))]
 async fn save_segment<P>(
-    (stream, mut segment, mut bytes): SegmentIdData,
-    init_map: &mut HashMap<Stream, Vec<u8>>,
-    downloaded_segments: &mut HashMap<Stream, Vec<(Segment, PathBuf)>>,
+    (stream, mut segment, bytes): SegmentIdData,
+    downloaded_segments: &mut HashMap<Stream, BinaryHeap<(Segment, PathBuf)>>,
     segments_directory: P,
 ) -> Result<()>
 where
     P: AsRef<Path> + Debug,
 {
-    // Get ID here before mutably borrowing segment's fields
-    let id = segment.id();
+    // Detect segment format
+    segment.format = MediaFormat::detect(bytes.clone()).await?;
 
-    match segment {
-        Segment::Initialization { .. } => {
-            // If segment is initialization, save data for later use
-            init_map.insert(stream, bytes);
-        }
-        Segment::Sequence { ref mut format, .. } => {
-            // If initialization exists, prepend it first
-            if let Some(init) = init_map.get(&stream) {
-                bytes = init.iter().chain(bytes.iter()).copied().collect();
-            }
+    // Save segment to disk
+    let file_path = segments_directory.as_ref().join(format!(
+        "segment_{}_{}.{}",
+        stream,
+        segment.id(),
+        segment.format.extension()
+    ));
+    event!(Level::TRACE, "saving to {:?}", &file_path);
+    let mut file = fs::File::create(&file_path).await?;
+    file.write_all(&bytes).await?;
 
-            // Detect segment format
-            *format = MediaFormat::detect(bytes.clone()).await?;
-
-            // Save segment to disk
-            let file_path = segments_directory.as_ref().join(format!(
-                "segment_{}_{}.{}",
-                stream,
-                id,
-                format.extension()
-            ));
-            event!(Level::TRACE, "saving to {:?}", &file_path);
-            let mut file = fs::File::create(&file_path).await?;
-            file.write_all(&bytes).await?;
-
-            // Remember path
-            downloaded_segments
-                .entry(stream)
-                .or_default()
-                .push((segment, file_path));
-        }
-    }
+    // Remember path
+    downloaded_segments
+        .entry(stream)
+        .or_default()
+        .push((segment, file_path));
 
     Ok(())
 }

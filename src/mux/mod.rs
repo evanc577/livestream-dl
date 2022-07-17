@@ -1,6 +1,6 @@
 mod concat;
 
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
@@ -17,7 +17,7 @@ use crate::livestream::{Segment, Stream};
 /// Remux media files into a single mp4 file with ffmpeg
 #[instrument(level = "trace")]
 pub async fn remux(
-    downloaded_paths: HashMap<Stream, Vec<(Segment, PathBuf)>>,
+    downloaded_paths: HashMap<Stream, BinaryHeap<(Segment, PathBuf)>>,
     output_dir: &Path,
 ) -> Result<()> {
     // Get list of concatenated streams for each discontinuity

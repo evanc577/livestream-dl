@@ -7,9 +7,10 @@ use reqwest_middleware::ClientWithMiddleware;
 use tokio::time;
 use tracing::{event, instrument, Level};
 
+use super::remote_data::RemoteData;
 use super::utils::make_absolute_url;
 use super::{Encryption, Segment, Stopper, Stream};
-use crate::livestream::{HashableByteRange, MediaFormat};
+use crate::livestream::MediaFormat;
 
 /// Periodically fetch m3u8 media playlist and send new segments to download task
 #[instrument(skip(client, notify_stop, tx))]
@@ -21,7 +22,7 @@ pub async fn m3u8_fetcher(
     url: Url,
 ) -> Result<()> {
     let mut last_seg = None;
-    let mut init_downloaded = false;
+    let mut cur_init = None;
 
     loop {
         // Fetch playlist
@@ -60,52 +61,30 @@ pub async fn m3u8_fetcher(
             last_seg = Some((discon_seq, seq));
             found_new_segments = true;
 
-            // Download initialization if needed
-            if !init_downloaded {
-                if let Some(map) = &segment.map {
-                    let init_url = make_absolute_url(&url, &map.uri)?;
-                    event!(
-                        Level::TRACE,
-                        "Found new initialization segment {}",
-                        init_url.as_str()
-                    );
-                    if tx
-                        .unbounded_send((
-                            stream.clone(),
-                            Segment::Initialization {
-                                url: init_url,
-                                byte_range: map
-                                    .byte_range
-                                    .as_ref()
-                                    .map(|b| HashableByteRange::new(b.clone())),
-                            },
-                            encryption.clone(),
-                        ))
-                        .is_err()
-                    {
-                        return Ok(());
-                    }
-                    init_downloaded = true;
-                }
-            }
-
             // Parse URL
             let seg_url = make_absolute_url(&url, &segment.uri)?;
+
+            // Make Initialization
+            let init = if let Some(map) = &segment.map {
+                let init =
+                    RemoteData::new(make_absolute_url(&url, &map.uri)?, map.byte_range.clone());
+                cur_init = Some(init.clone());
+                Some(init)
+            } else {
+                cur_init.clone()
+            };
 
             // Download segment
             event!(Level::TRACE, "Found new segment {}", seg_url.as_str());
             if tx
                 .unbounded_send((
                     stream.clone(),
-                    Segment::Sequence {
-                        url: seg_url,
-                        byte_range: segment
-                            .byte_range
-                            .as_ref()
-                            .map(|b| HashableByteRange::new(b.clone())),
+                    Segment {
+                        data: RemoteData::new(seg_url, segment.byte_range.clone()),
                         discon_seq,
                         seq,
                         format: MediaFormat::Unknown,
+                        initialization: init,
                     },
                     encryption.clone(),
                 ))
