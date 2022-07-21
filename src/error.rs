@@ -1,12 +1,34 @@
-use thiserror::Error;
+use std::fmt::Display;
+
+use reqwest::Response;
 
 #[allow(dead_code)]
-#[derive(Error, Debug)]
+#[derive(Debug)]
 pub enum LivestreamDLError {
-    #[error("http request returned status code {0}, url: {1}")]
-    NetworkRequest(u16, String),
-    #[error("failed to parse cookie: {0}")]
+    NetworkRequest(Response),
     ParseCookie(String),
-    #[error("failed to parse m3u8 playlist from url: {0}")]
     ParseM3u8(String),
 }
+
+impl Display for LivestreamDLError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NetworkRequest(r) => {
+                write!(
+                    f,
+                    "http request returned status code {} for url: {}",
+                    r.status().as_u16(),
+                    r.url()
+                )
+            }
+            Self::ParseCookie(s) => {
+                write!(f, "failed to parse cookie: {}", s)
+            }
+            Self::ParseM3u8(s) => {
+                write!(f, "failed to parse m3u8 playlist from url: {}", s)
+            }
+        }
+    }
+}
+
+impl std::error::Error for LivestreamDLError {}

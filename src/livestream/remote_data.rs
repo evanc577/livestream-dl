@@ -26,7 +26,8 @@ impl RemoteData {
         Some(format!("bytes={}-{}", start, end))
     }
 
-    pub async fn fetch(&self, client: &HttpClient) -> Result<Vec<u8>> {
+    /// Fetch this segment and return (bytes, final url)
+    pub async fn fetch(&self, client: &HttpClient) -> Result<(Vec<u8>, Url)> {
         // Add byte range headers if needed
         let mut header_map = HeaderMap::new();
         if let Some(ref range) = self.byte_range_string() {
@@ -40,14 +41,11 @@ impl RemoteData {
             .send()
             .await?;
         if !resp.status().is_success() {
-            return Err(LivestreamDLError::NetworkRequest(
-                resp.status().as_u16(),
-                self.url().to_string(),
-            )
-            .into());
+            return Err(LivestreamDLError::NetworkRequest(resp).into());
         }
+        let final_url = resp.url().clone();
         let bytes = resp.bytes().await?.into_iter().collect();
 
-        Ok(bytes)
+        Ok((bytes, final_url))
     }
 }

@@ -122,9 +122,7 @@ impl Livestream {
         // Get m3u8 playlist
         let resp = client.get(url.clone()).send().await?;
         if !resp.status().is_success() {
-            return Err(
-                LivestreamDLError::NetworkRequest(resp.status().as_u16(), url.to_string()).into(),
-            );
+            return Err(LivestreamDLError::NetworkRequest(resp).into());
         }
 
         // Check if m3u8 is master or media
@@ -338,7 +336,8 @@ async fn fetch_segment(
                 let d = i
                     .fetch(client)
                     .await
-                    .context("error fetching segment initialization")?;
+                    .context("error fetching segment initialization")?
+                    .0;
                 guard.put(i.clone(), d.clone());
                 d
             }
@@ -348,7 +347,7 @@ async fn fetch_segment(
     };
 
     // Fetch segment
-    let data_bytes = segment
+    let (data_bytes, final_url) = segment
         .data
         .fetch(client)
         .await
@@ -364,7 +363,7 @@ async fn fetch_segment(
     event!(
         Level::INFO,
         "Downloaded {} {}",
-        segment.url().as_str(),
+        final_url,
         segment
             .data
             .byte_range_string()
