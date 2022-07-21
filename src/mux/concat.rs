@@ -1,7 +1,6 @@
 use std::borrow::Cow;
 use std::collections::{BinaryHeap, HashMap};
 use std::env;
-use std::fmt::Debug;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -13,7 +12,7 @@ use tracing::{event, Level};
 use crate::livestream::{MediaFormat, Segment, Stream};
 
 /// For each discontinuity, concatenate all streams
-pub async fn concat_streams<P: AsRef<Path> + Debug>(
+pub async fn concat_streams<P: AsRef<Path>>(
     downloaded_paths: &HashMap<Stream, BinaryHeap<(Segment, PathBuf)>>,
     output_dir: P,
 ) -> Result<HashMap<u64, Vec<(&Stream, PathBuf)>>> {
@@ -73,7 +72,7 @@ pub async fn concat_streams<P: AsRef<Path> + Debug>(
 fn gen_concat_path(
     stream: &Stream,
     segment: &Segment,
-    output_dir: impl AsRef<Path> + Debug,
+    output_dir: impl AsRef<Path>,
     d: u64,
 ) -> Result<PathBuf> {
     let ext = segment.format.extension();
@@ -82,10 +81,7 @@ fn gen_concat_path(
     Ok(file_path)
 }
 
-async fn concat_segments<P: AsRef<Path> + Debug>(
-    inputs: &[(&Segment, P)],
-    output: P,
-) -> Result<()> {
+async fn concat_segments<P: AsRef<Path>>(inputs: &[(&Segment, P)], output: P) -> Result<()> {
     if should_use_ffmpeg_concat(inputs[0].0).await? {
         ffmpeg_concat(inputs.iter().map(|(_, p)| p), &output).await
     } else {
@@ -93,7 +89,7 @@ async fn concat_segments<P: AsRef<Path> + Debug>(
     }
 }
 
-async fn file_concat<P: AsRef<Path> + Debug>(
+async fn file_concat<P: AsRef<Path>>(
     input_paths: impl IntoIterator<Item = P>,
     output: P,
 ) -> Result<()> {
@@ -110,7 +106,7 @@ async fn file_concat<P: AsRef<Path> + Debug>(
     Ok(())
 }
 
-async fn ffmpeg_concat<P: AsRef<Path> + Debug>(
+async fn ffmpeg_concat<P: AsRef<Path>>(
     input_paths: impl IntoIterator<Item = P>,
     output: P,
 ) -> Result<()> {

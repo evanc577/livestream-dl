@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tokio::process;
-use tracing::{event, instrument, Level};
+use tracing::{event, Level};
 
 #[non_exhaustive]
 #[allow(dead_code)]
@@ -29,7 +29,6 @@ pub enum MediaFormat {
 }
 
 impl MediaFormat {
-    #[instrument(skip(data))]
     pub async fn detect(data: Vec<u8>) -> Result<Self> {
         #[derive(Deserialize)]
         struct FFProbeOuput {
@@ -103,7 +102,6 @@ impl MediaFormat {
         }
     }
 
-    #[instrument]
     pub fn extension(&self) -> String {
         match self {
             Self::MpegTs => "ts",

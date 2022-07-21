@@ -4,7 +4,7 @@ use anyhow::Result;
 use futures::channel::mpsc;
 use reqwest::Url;
 use tokio::time;
-use tracing::{event, instrument, Level};
+use tracing::{event, Level};
 
 use super::http_client::HttpClient;
 use super::remote_data::RemoteData;
@@ -14,7 +14,6 @@ use crate::error::LivestreamDLError;
 use crate::livestream::MediaFormat;
 
 /// Periodically fetch m3u8 media playlist and send new segments to download task
-#[instrument(skip(client, notify_stop, tx))]
 pub async fn m3u8_fetcher(
     client: HttpClient,
     notify_stop: Stopper,

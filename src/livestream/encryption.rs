@@ -3,7 +3,7 @@ use aes::cipher::{BlockDecryptMut, KeyIvInit};
 use anyhow::Result;
 use m3u8_rs::Key;
 use reqwest::Url;
-use tracing::{event, instrument, Level};
+use tracing::{event, Level};
 
 use super::http_client::HttpClient;
 use super::utils::make_absolute_url;
@@ -22,7 +22,6 @@ pub enum Encryption {
 impl Encryption {
     /// Check m3u8_key and return encryption.
     /// If encrypted, will make a query to the designated url to fetch the key
-    #[instrument]
     pub async fn new(m3u8_key: &Key, base_url: &Url, seq: u64) -> Result<Self> {
         let encryption = match &m3u8_key {
             k if k.method == "NONE" => Self::None,
@@ -69,7 +68,6 @@ impl Encryption {
     }
 
     /// Decrypt the given data
-    #[instrument(skip(client, data))]
     pub async fn decrypt(&self, client: &HttpClient, data: &[u8]) -> Result<Vec<u8>> {
         let r = match self {
             Self::None => Vec::from(data),

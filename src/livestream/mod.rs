@@ -12,7 +12,7 @@ mod stream;
 mod utils;
 
 use std::collections::{BinaryHeap, HashMap};
-use std::fmt::{Debug, Display};
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,7 +29,7 @@ use reqwest_retry::{policies, RetryTransientMiddleware};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
-use tracing::{event, instrument, Level};
+use tracing::{event, Level};
 
 use self::cookies::CookieJar;
 use self::displayable_variant::DisplayableVariant;
@@ -85,7 +85,6 @@ impl Livestream {
     ///
     /// If a master playlist is given, choose the highest bitrate variant and download its stream
     /// and all of its alternative media streams
-    #[instrument(level = "trace")]
     pub async fn new(url: &Url, options: &Args) -> Result<(Self, Stopper)> {
         // Create reqwest client
         let client =
@@ -210,7 +209,6 @@ impl Livestream {
     }
 
     /// Download the livestream to disk
-    #[instrument(level = "trace")]
     pub async fn download(&self, output: &Path) -> Result<()> {
         // m3u8 reader task handles
         let mut handles = Vec::new();
@@ -237,7 +235,6 @@ impl Livestream {
 
         // Create segments directory if needed
         let segments_directory = output.join("segments");
-        fs::create_dir_all(&segments_directory).await?;
 
         // Cache initializations for each stream
         let init_lrus: HashMap<_, _> = self
@@ -317,7 +314,6 @@ impl Livestream {
 }
 
 /// Download segment and save to disk if necessary
-#[instrument(level = "trace")]
 async fn fetch_segment(
     client: &HttpClient,
     lru: Arc<Mutex<LruCache<RemoteData, Vec<u8>>>>,
@@ -373,17 +369,19 @@ async fn fetch_segment(
     Ok((stream, segment, bytes))
 }
 
-#[instrument(level = "trace", skip(bytes))]
 async fn save_segment<P>(
     (stream, mut segment, bytes): SegmentIdData,
     downloaded_segments: &mut HashMap<Stream, BinaryHeap<(Segment, PathBuf)>>,
     segments_directory: P,
 ) -> Result<()>
 where
-    P: AsRef<Path> + Debug,
+    P: AsRef<Path>,
 {
     // Detect segment format
     segment.format = MediaFormat::detect(bytes.clone()).await?;
+
+    // Create directory if neeeded
+    fs::create_dir_all(segments_directory.as_ref()).await?;
 
     // Save segment to disk
     let file_path = segments_directory.as_ref().join(format!(

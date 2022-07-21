@@ -3,7 +3,6 @@ mod error;
 mod livestream;
 mod mux;
 
-use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -19,11 +18,10 @@ fn main() -> Result<()> {
     let args = cli::Args::parse();
 
     // Init logging
-    let output = create_output_dir(&args.download_options.output)?;
-    init_tracing(&output)?;
+    init_tracing()?;
 
     // Run main program
-    if let Err(e) = run(args, output) {
+    if let Err(e) = run(args) {
         event!(Level::ERROR, "{:?}", e);
         std::process::exit(1);
     }
@@ -32,7 +30,7 @@ fn main() -> Result<()> {
 }
 
 #[tokio::main]
-async fn run(args: cli::Args, output: impl AsRef<Path>) -> Result<()> {
+async fn run(args: cli::Args) -> Result<()> {
     let (livestream, stopper) = Livestream::new(&args.m3u8_url, &args)
         .await
         .context("error initializing livestream downloader")?;
@@ -67,13 +65,14 @@ async fn run(args: cli::Args, output: impl AsRef<Path>) -> Result<()> {
     }
 
     // Download stream
-    event!(Level::INFO, "Downloading stream to {:?}", output.as_ref());
+    let output = gen_output_dir(&args.download_options.output)?;
+    event!(Level::INFO, "Downloading stream to {:?}", output);
     livestream.download(output.as_ref()).await?;
 
     Ok(())
 }
 
-fn create_output_dir(output_dir: &Option<impl AsRef<Path> + Debug>) -> Result<PathBuf> {
+fn gen_output_dir(output_dir: &Option<impl AsRef<Path>>) -> Result<PathBuf> {
     let final_output_dir = if let Some(output_dir) = output_dir {
         // If output directory already exists, prompt user to overwrite, otherwise exit
         if output_dir.as_ref().is_dir() {
@@ -108,34 +107,22 @@ fn create_output_dir(output_dir: &Option<impl AsRef<Path> + Debug>) -> Result<Pa
         candidate_path
     };
 
-    // Create directory
-    std::fs::create_dir_all(&final_output_dir)?;
-
     Ok(final_output_dir)
 }
 
-fn init_tracing(output_dir: impl AsRef<Path>) -> Result<()> {
+fn init_tracing() -> Result<()> {
     // Enable ANSI support on Windows for colors
     #[cfg(target_family = "windows")]
     let _ = ansi_term::enable_ansi_support();
-
-    // Log DEBUG to file unless overridden
-    let file = std::fs::File::create(output_dir.as_ref().join("log.txt"))?;
-    let file_log = tracing_subscriber::fmt::layer()
-        .json()
-        .with_writer(file)
-        .with_filter(EnvFilter::from_env("LIVESTREAM_DL_LOG").or(LevelFilter::DEBUG));
 
     // Log INFO to stdout
     let stdout_log = tracing_subscriber::fmt::layer()
         .compact()
         .without_time()
-        .with_filter(LevelFilter::INFO);
+        .with_filter(EnvFilter::from_env("LIVESTREAM_DL_LOG").or(LevelFilter::INFO));
 
     // Start logging
-    let subscriber = tracing_subscriber::Registry::default()
-        .with(stdout_log)
-        .with(file_log);
+    let subscriber = tracing_subscriber::Registry::default().with(stdout_log);
     tracing::subscriber::set_global_default(subscriber)?;
 
     Ok(())

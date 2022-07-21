@@ -1,7 +1,6 @@
 mod concat;
 
 use std::collections::{BinaryHeap, HashMap};
-use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -9,13 +8,12 @@ use isolang::Language;
 use oxilangtag::LanguageTag;
 use serde::Deserialize;
 use tokio::{fs, process};
-use tracing::{event, instrument, Level};
+use tracing::{event, Level};
 
 use self::concat::concat_streams;
 use crate::livestream::{Segment, Stream};
 
 /// Remux media files into a single mp4 file with ffmpeg
-#[instrument(level = "trace")]
 pub async fn remux(
     downloaded_paths: HashMap<Stream, BinaryHeap<(Segment, PathBuf)>>,
     output_dir: &Path,
@@ -51,7 +49,7 @@ pub async fn remux(
 }
 
 /// Mux streams into a video file
-async fn mux_streams<P: AsRef<Path> + Debug>(
+async fn mux_streams<P: AsRef<Path>>(
     streams: &Vec<(&Stream, PathBuf)>,
     output_path: P,
 ) -> Result<()> {
@@ -72,7 +70,7 @@ async fn mux_streams<P: AsRef<Path> + Debug>(
     // Add metadata
     add_metadata(&mut cmd, streams).await?;
 
-    event!(Level::INFO, "ffmpeg mux to {:?}", &output_path);
+    event!(Level::INFO, "ffmpeg mux to {:?}", output_path.as_ref());
 
     // Set remaining ffmpeg args and run ffmpeg
     cmd.arg("-muxpreload")
@@ -236,8 +234,7 @@ async fn stream_type(stream_path: impl AsRef<Path>) -> Result<Vec<StreamType>> {
 }
 
 /// Convert rfc5646 language tag to iso639-3 format readable by ffmpeg
-#[instrument(level = "trace")]
-fn to_iso639_2(lang: impl AsRef<str> + Debug) -> Result<String> {
+fn to_iso639_2(lang: impl AsRef<str>) -> Result<String> {
     // Parse language tag string
     let tag = LanguageTag::parse(lang.as_ref())?;
     let mut code = tag.primary_language().to_owned();
