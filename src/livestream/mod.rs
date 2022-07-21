@@ -2,6 +2,7 @@ mod cookies;
 mod displayable_variant;
 mod encryption;
 mod hashable_byte_range;
+mod http_client;
 mod media_format;
 mod playlist_fetcher;
 mod remote_data;
@@ -9,7 +10,6 @@ mod segment;
 mod stopper;
 mod stream;
 mod utils;
-mod http_client;
 
 use std::collections::{BinaryHeap, HashMap};
 use std::fmt::{Debug, Display};
@@ -193,8 +193,8 @@ impl Livestream {
             Ok((_, Playlist::MediaPlaylist(_))) => {
                 streams.insert(Stream::Main, final_url);
             }
-            Err(e) => {
-                return Err(anyhow::anyhow!("Error parsing m3u8 playlist: {}", e));
+            Err(_) => {
+                return Err(LivestreamDLError::ParseM3u8(final_url.to_string()).into());
             }
         }
 
@@ -230,14 +230,7 @@ impl Livestream {
                 let url = url.clone();
 
                 handles.push(tokio::spawn(async move {
-                    m3u8_fetcher(
-                        client,
-                        stopper.clone(),
-                        tx,
-                        stream,
-                        url,
-                    )
-                    .await
+                    m3u8_fetcher(client, stopper.clone(), tx, stream, url).await
                 }));
             }
 

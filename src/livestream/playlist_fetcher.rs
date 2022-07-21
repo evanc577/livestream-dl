@@ -31,10 +31,7 @@ pub async fn m3u8_fetcher(
         let mut found_new_segments = false;
 
         event!(Level::TRACE, "Fetching {}", url.as_str());
-        let resp = client
-            .get(url.clone())
-            .send()
-            .await?;
+        let resp = client.get(url.clone()).send().await?;
         if !resp.status().is_success() {
             return Err(
                 LivestreamDLError::NetworkRequest(resp.status().as_u16(), url.to_string()).into(),
@@ -43,7 +40,7 @@ pub async fn m3u8_fetcher(
         let bytes = resp.bytes().await?;
 
         let media_playlist = m3u8_rs::parse_media_playlist(&bytes)
-            .map_err(|e| anyhow::anyhow!("{:?}", e))?
+            .map_err(|_| LivestreamDLError::ParseM3u8(url.to_string()))?
             .1;
 
         // Loop through media segments

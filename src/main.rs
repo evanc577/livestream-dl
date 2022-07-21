@@ -1,7 +1,7 @@
 mod cli;
+mod error;
 mod livestream;
 mod mux;
-mod error;
 
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};

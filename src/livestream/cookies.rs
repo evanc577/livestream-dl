@@ -8,6 +8,8 @@ use reqwest::cookie::{CookieStore, Jar};
 use reqwest::Url;
 use tracing::{event, Level};
 
+use crate::error::LivestreamDLError;
+
 /// Cookie provider wrapping reqwest Jar
 pub struct CookieJar(Jar);
 
@@ -19,25 +21,34 @@ impl CookieJar {
         let file = fs::File::open(path)?;
         let reader = BufReader::new(file);
         for line in reader.lines() {
-            let line = line?.trim().to_owned();
-
+            let line = line?;
             // Skip empty lines and comments
-            if line.is_empty() || line.starts_with('#') {
+            if line.trim().is_empty() || line.trim().starts_with('#') {
                 continue;
             }
 
-            if let [domain, _, _, _, _, name, value] =
-                line.split('\t').collect::<Vec<_>>().as_slice()
-            {
-                let domain = Url::parse(&format!("https://{}", domain.trim_start_matches('.')))?;
-                let cookie = format!("{}={}", name, value);
-                jar.add_cookie_str(&cookie, &domain)
-            } else {
-                event!(Level::WARN, "Invalid cookie: {}", line);
-            }
+            let (domain, cookie) = match parse_cookie(&line) {
+                Ok(x) => x,
+                Err(e) => {
+                    event!(Level::WARN, "{}", e);
+                    continue;
+                }
+            };
+            jar.add_cookie_str(&cookie, &domain)
         }
 
         Ok(Self(jar))
+    }
+}
+
+fn parse_cookie(line: &str) -> Result<(Url, String)> {
+    if let [domain, _, _, _, _, name, value] = line.split('\t').collect::<Vec<_>>().as_slice() {
+        let domain = Url::parse(&format!("https://{}", domain.trim_start_matches('.')))
+            .map_err(|_| LivestreamDLError::ParseCookie(line.to_owned()))?;
+        let cookie = format!("{}={}", name, value);
+        Ok((domain, cookie))
+    } else {
+        Err(LivestreamDLError::ParseCookie(line.to_owned()).into())
     }
 }
 
