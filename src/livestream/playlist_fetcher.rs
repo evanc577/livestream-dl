@@ -3,19 +3,20 @@ use std::time::Duration;
 use anyhow::Result;
 use futures::channel::mpsc;
 use reqwest::Url;
-use reqwest_middleware::ClientWithMiddleware;
 use tokio::time;
 use tracing::{event, instrument, Level};
 
+use super::http_client::HttpClient;
 use super::remote_data::RemoteData;
 use super::utils::make_absolute_url;
 use super::{Encryption, Segment, Stopper, Stream};
+use crate::error::LivestreamDLError;
 use crate::livestream::MediaFormat;
 
 /// Periodically fetch m3u8 media playlist and send new segments to download task
 #[instrument(skip(client, notify_stop, tx))]
 pub async fn m3u8_fetcher(
-    client: ClientWithMiddleware,
+    client: HttpClient,
     notify_stop: Stopper,
     tx: mpsc::UnboundedSender<(Stream, Segment, Encryption)>,
     stream: Stream,
@@ -28,8 +29,19 @@ pub async fn m3u8_fetcher(
         // Fetch playlist
         let now = time::Instant::now();
         let mut found_new_segments = false;
+
         event!(Level::TRACE, "Fetching {}", url.as_str());
-        let bytes = client.get(url.clone()).send().await?.bytes().await?;
+        let resp = client
+            .get(url.clone())
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            return Err(
+                LivestreamDLError::NetworkRequest(resp.status().as_u16(), url.to_string()).into(),
+            );
+        }
+        let bytes = resp.bytes().await?;
+
         let media_playlist = m3u8_rs::parse_media_playlist(&bytes)
             .map_err(|e| anyhow::anyhow!("{:?}", e))?
             .1;

@@ -3,9 +3,9 @@ use aes::cipher::{BlockDecryptMut, KeyIvInit};
 use anyhow::Result;
 use m3u8_rs::Key;
 use reqwest::Url;
-use reqwest_middleware::ClientWithMiddleware;
 use tracing::{event, instrument, Level};
 
+use super::http_client::HttpClient;
 use super::utils::make_absolute_url;
 
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
@@ -70,7 +70,7 @@ impl Encryption {
 
     /// Decrypt the given data
     #[instrument(skip(client, data))]
-    pub async fn decrypt(&self, client: &ClientWithMiddleware, data: &[u8]) -> Result<Vec<u8>> {
+    pub async fn decrypt(&self, client: &HttpClient, data: &[u8]) -> Result<Vec<u8>> {
         let r = match self {
             Self::None => Vec::from(data),
             Self::Aes128 { key_uri, iv } => {

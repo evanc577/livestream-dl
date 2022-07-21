@@ -59,4 +59,8 @@ pub struct NetworkOptions {
     /// Use cookies, path to cookies file in Netscape format
     #[clap(short, long, value_parser, value_hint = clap::ValueHint::FilePath)]
     pub cookies: Option<PathBuf>,
+
+    /// Copy GET query parameters from m3u8_url to all subsequent network requests
+    #[clap(short = 'q', long, value_parser)]
+    pub copy_query: bool,
 }

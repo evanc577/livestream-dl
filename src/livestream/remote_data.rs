@@ -2,9 +2,10 @@ use anyhow::Result;
 use m3u8_rs::ByteRange;
 use reqwest::header::{self, HeaderMap};
 use reqwest::Url;
-use reqwest_middleware::ClientWithMiddleware;
 
 use super::HashableByteRange;
+use super::http_client::HttpClient;
+use crate::error::LivestreamDLError;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct RemoteData(Url, Option<HashableByteRange>);
@@ -25,7 +26,10 @@ impl RemoteData {
         Some(format!("bytes={}-{}", start, end))
     }
 
-    pub async fn fetch(&self, client: &ClientWithMiddleware) -> Result<Vec<u8>> {
+    pub async fn fetch(
+        &self,
+        client: &HttpClient,
+    ) -> Result<Vec<u8>> {
         // Add byte range headers if needed
         let mut header_map = HeaderMap::new();
         if let Some(ref range) = self.byte_range_string() {
@@ -33,15 +37,19 @@ impl RemoteData {
         }
 
         // Fetch data
-        let bytes: Vec<u8> = client
+        let resp = client
             .get(self.url().clone())
             .headers(header_map)
             .send()
-            .await?
-            .bytes()
-            .await?
-            .into_iter()
-            .collect();
+            .await?;
+        if !resp.status().is_success() {
+            return Err(LivestreamDLError::NetworkRequest(
+                resp.status().as_u16(),
+                self.url().to_string(),
+            )
+            .into());
+        }
+        let bytes = resp.bytes().await?.into_iter().collect();
 
         Ok(bytes)
     }

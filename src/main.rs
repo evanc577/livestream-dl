@@ -1,11 +1,12 @@
 mod cli;
 mod livestream;
 mod mux;
+mod error;
 
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use livestream::Livestream;
 use tracing::{event, Level};
@@ -23,7 +24,7 @@ fn main() -> Result<()> {
 
     // Run main program
     if let Err(e) = run(args, output) {
-        event!(Level::ERROR, "{}", e);
+        event!(Level::ERROR, "{:?}", e);
         std::process::exit(1);
     }
 
@@ -32,7 +33,9 @@ fn main() -> Result<()> {
 
 #[tokio::main]
 async fn run(args: cli::Args, output: impl AsRef<Path>) -> Result<()> {
-    let (livestream, stopper) = Livestream::new(&args.m3u8_url, &args).await?;
+    let (livestream, stopper) = Livestream::new(&args.m3u8_url, &args)
+        .await
+        .context("error initializing livestream downloader")?;
 
     // Gracefully exit on ctrl-c
     {

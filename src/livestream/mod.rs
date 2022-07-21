@@ -9,6 +9,7 @@ mod segment;
 mod stopper;
 mod stream;
 mod utils;
+mod http_client;
 
 use std::collections::{BinaryHeap, HashMap};
 use std::fmt::{Debug, Display};
@@ -16,14 +17,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::channel::mpsc;
 use futures::StreamExt;
 use itertools::Itertools;
 use lru::LruCache;
 use m3u8_rs::Playlist;
 use reqwest::{Client, Url};
-use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
+use reqwest_middleware::ClientBuilder;
 use reqwest_retry::{policies, RetryTransientMiddleware};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -34,6 +35,7 @@ use self::cookies::CookieJar;
 use self::displayable_variant::DisplayableVariant;
 pub use self::encryption::Encryption;
 pub use self::hashable_byte_range::HashableByteRange;
+use self::http_client::HttpClient;
 pub use self::media_format::MediaFormat;
 use self::playlist_fetcher::m3u8_fetcher;
 use self::remote_data::RemoteData;
@@ -42,12 +44,13 @@ pub use self::stopper::Stopper;
 pub use self::stream::Stream;
 use self::utils::make_absolute_url;
 use crate::cli::Args;
+use crate::error::LivestreamDLError;
 use crate::mux::remux;
 
 #[derive(Debug)]
 pub struct Livestream {
     streams: HashMap<Stream, Url>,
-    client: ClientWithMiddleware,
+    client: HttpClient,
     stopper: Stopper,
     options: Args,
 }
@@ -103,18 +106,25 @@ impl Livestream {
             .backoff_exponent(2)
             .build_with_max_retries(options.network_options.max_retries);
 
-        // Build client
+        // Build client with middleware
         let client = ClientBuilder::new(client)
             .with(RetryTransientMiddleware::new_with_policy(retry_policy))
             .build();
 
+        // Build HttpClient
+        let query_pairs = if options.network_options.copy_query {
+            Some(url.query_pairs().collect::<Vec<_>>())
+        } else {
+            None
+        };
+        let client = HttpClient::new(client, query_pairs);
+
         // Get m3u8 playlist
         let resp = client.get(url.clone()).send().await?;
         if !resp.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Failed to fetch m3u8 playlist. Status code: {}",
-                resp.status().as_str(),
-            ));
+            return Err(
+                LivestreamDLError::NetworkRequest(resp.status().as_u16(), url.to_string()).into(),
+            );
         }
 
         // Check if m3u8 is master or media
@@ -220,7 +230,14 @@ impl Livestream {
                 let url = url.clone();
 
                 handles.push(tokio::spawn(async move {
-                    m3u8_fetcher(client, stopper.clone(), tx, stream, url).await
+                    m3u8_fetcher(
+                        client,
+                        stopper.clone(),
+                        tx,
+                        stream,
+                        url,
+                    )
+                    .await
                 }));
             }
 
@@ -272,18 +289,25 @@ impl Livestream {
             }
 
             // Save the segment
-            let id_data = x?;
-            let segment = id_data.1.clone();
-            let res = save_segment(id_data, &mut downloaded_segments, &segments_directory).await;
+            match x {
+                Ok(id_data) => {
+                    let segment = id_data.1.clone();
+                    let res =
+                        save_segment(id_data, &mut downloaded_segments, &segments_directory).await;
 
-            // Log warning if segment failed to download
-            if let Err(e) = res {
-                event!(
-                    Level::WARN,
-                    "Failed to download {}, reason: {}",
-                    segment.url(),
-                    e
-                );
+                    // Log warning if segment failed to download
+                    if let Err(e) = res {
+                        event!(
+                            Level::WARN,
+                            "Failed to save {}, reason: {}",
+                            segment.url(),
+                            e
+                        );
+                    }
+                }
+                Err(e) => {
+                    event!(Level::WARN, "{:?}", e);
+                }
             }
         }
 
@@ -294,7 +318,7 @@ impl Livestream {
 
         // Check playlist fetcher task join handles
         for handle in handles {
-            handle.await??;
+            handle.await?.context("m3u8 fetcher failed")?;
         }
 
         Ok(())
@@ -304,7 +328,7 @@ impl Livestream {
 /// Download segment and save to disk if necessary
 #[instrument(level = "trace")]
 async fn fetch_segment(
-    client: &ClientWithMiddleware,
+    client: &HttpClient,
     lru: Arc<Mutex<LruCache<RemoteData, Vec<u8>>>>,
     stream: Stream,
     segment: Segment,
@@ -318,7 +342,10 @@ async fn fetch_segment(
         match data {
             Some(d) => d,
             None => {
-                let d = i.fetch(client).await?;
+                let d = i
+                    .fetch(client)
+                    .await
+                    .context("error fetching segment initialization")?;
                 guard.put(i.clone(), d.clone());
                 d
             }
@@ -328,7 +355,11 @@ async fn fetch_segment(
     };
 
     // Fetch segment
-    let data_bytes = segment.data.fetch(client).await?;
+    let data_bytes = segment
+        .data
+        .fetch(client)
+        .await
+        .context("error fetching segment")?;
     let decrypt_data_bytes = encryption.decrypt(client, &data_bytes).await?;
 
     // Concat initialization and segment
