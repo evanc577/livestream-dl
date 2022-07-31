@@ -20,8 +20,11 @@ fn main() -> Result<()> {
     // Init logging
     init_tracing()?;
 
+    // Create output directory before spawning tokio runtime to use local utc offset
+    let output = gen_output_dir(&args.download_options.output)?;
+
     // Run main program
-    if let Err(e) = run(args) {
+    if let Err(e) = run(args, output) {
         event!(Level::ERROR, "{:?}", e);
         std::process::exit(1);
     }
@@ -30,7 +33,7 @@ fn main() -> Result<()> {
 }
 
 #[tokio::main]
-async fn run(args: cli::Args) -> Result<()> {
+async fn run(args: cli::Args, output: impl AsRef<Path>) -> Result<()> {
     let (livestream, stopper) = Livestream::new(&args.m3u8_url, &args)
         .await
         .context("error initializing livestream downloader")?;
@@ -65,8 +68,7 @@ async fn run(args: cli::Args) -> Result<()> {
     }
 
     // Download stream
-    let output = gen_output_dir(&args.download_options.output)?;
-    event!(Level::INFO, "Downloading stream to {:?}", output);
+    event!(Level::INFO, "Downloading stream to {:?}", output.as_ref());
     livestream.download(output.as_ref()).await?;
 
     Ok(())
