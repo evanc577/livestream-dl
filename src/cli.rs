@@ -33,11 +33,6 @@ pub struct DownloadOptions {
     /// stream
     #[clap(long, value_parser)]
     pub choose_stream: bool,
-
-    /// (TLS) By default, every SSL connection curl makes is verified to be secure.
-    /// This option allows request to proceed and operate even for server connections otherwise considered insecure.
-    #[clap(long, value_parser, short='k')]
-    pub insecure: bool,
 }
 
 #[derive(Parser, Clone, Debug)]
@@ -68,4 +63,9 @@ pub struct NetworkOptions {
     /// Copy GET query parameters from m3u8_url to all subsequent network requests
     #[clap(short = 'q', long, value_parser)]
     pub copy_query: bool,
+
+    /// By default, every TLS connection is verified to be secure.
+    /// This option allows livestream-dl to skip verification and proceed without checking.
+    #[clap(short = 'k', long, value_parser)]
+    pub insecure: bool,
 }
