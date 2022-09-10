@@ -33,6 +33,11 @@ pub struct DownloadOptions {
     /// stream
     #[clap(long, value_parser)]
     pub choose_stream: bool,
+
+    /// (TLS) By default, every SSL connection curl makes is verified to be secure.
+    /// This option allows request to proceed and operate even for server connections otherwise considered insecure.
+    #[clap(long, value_parser, short='k')]
+    pub insecure: bool,
 }
 
 #[derive(Parser, Clone, Debug)]

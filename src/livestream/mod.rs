@@ -87,10 +87,13 @@ impl Livestream {
     /// and all of its alternative media streams
     pub async fn new(url: &Url, options: &Args) -> Result<(Self, Stopper)> {
         // Create reqwest client
-        // and accept invalid certs
-        let client = Client::builder()
-            .danger_accept_invalid_certs(true)
-            .timeout(Duration::from_secs(options.network_options.timeout));
+        let mut client =
+            Client::builder().timeout(Duration::from_secs(options.network_options.timeout));
+
+        // If insecure mode is turned on, ignore the certificate check
+        if options.download_options.insecure {
+            client = client.danger_accept_invalid_certs(true);
+        }
 
         // Add cookie provider if needed
         let client = if let Some(cookies_path) = &options.network_options.cookies {
