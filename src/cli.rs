@@ -63,4 +63,9 @@ pub struct NetworkOptions {
     /// Copy GET query parameters from m3u8_url to all subsequent network requests
     #[clap(short = 'q', long, value_parser)]
     pub copy_query: bool,
+
+    /// By default, every TLS connection is verified to be secure.
+    /// This option allows livestream-dl to skip verification and proceed without checking.
+    #[clap(short = 'k', long, value_parser)]
+    pub insecure: bool,
 }
