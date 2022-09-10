@@ -14,8 +14,7 @@ An experimental HLS (m3u8) livestream downloader
   - [x] Discontinuities
   - [ ] Decryption
     - [x] AES-128
-    - [ ] SAMPLE-AES
-    - [ ] Widevine DRM (Not possible)
+    - [ ] SAMPLE-AES (Usually DRM)
   - [ ] HLS low latency
   - [x] Load cookies from file
 - Additional
